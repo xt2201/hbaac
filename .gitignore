@@ -1,0 +1,49 @@
+# Datasets & Large Files
+dataset/
+data/
+*.csv
+*.zip
+*.tar.gz
+
+# Python & Jupyter Notebooks
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.ipynb_checkpoints/
+
+# Environments
+.env
+.venv
+venv/
+ENV/
+
+# IDE / Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS Files
+.DS_Store
+Thumbs.db
