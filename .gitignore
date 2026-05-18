@@ -1,9 +1,15 @@
 # Datasets & Large Files
 dataset/
 data/
+processed/
+models/
+submissions/
+eda_output/
 *.csv
 *.zip
 *.tar.gz
+*.parquet
+*.txt
 
 # Python & Jupyter Notebooks
 __pycache__/
