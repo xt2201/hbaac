@@ -21,6 +21,18 @@ def days_to_next_holiday(d: pd.Timestamp) -> int:
     return (fut.min() - d).days if len(fut) > 0 else 999
 
 
+def days_since_holiday(d: pd.Timestamp) -> int:
+    past = ALL_HOLIDAYS[ALL_HOLIDAYS <= d]
+    return (d - past.max()).days if len(past) > 0 else 999
+
+
+def is_pre_holiday(d: pd.Timestamp, lookahead: int = 2) -> int:
+    for h in range(1, lookahead + 1):
+        if (d + pd.Timedelta(days=h)) in ALL_HOLIDAYS:
+            return 1
+    return 0
+
+
 def enrich_panel(fp: pd.DataFrame, sub_skus: list) -> pd.DataFrame:
     fp = fp.sort_values(["ItemCode", "Date"]).reset_index(drop=True)
     sku_cat_dtype = pd.CategoricalDtype(categories=sub_skus, ordered=False)
@@ -43,9 +55,16 @@ def enrich_panel(fp: pd.DataFrame, sub_skus: list) -> pd.DataFrame:
     fp.drop(columns=["days_since_last_sale"], inplace=True)
 
     fp["is_holiday"] = fp["Date"].isin(ALL_HOLIDAYS).astype(np.int8)
+    unique_dates = fp["Date"].unique()
     fp["days_to_next_holiday"] = fp["Date"].map(
-        {d: days_to_next_holiday(d) for d in fp["Date"].unique()}
+        {d: days_to_next_holiday(d) for d in unique_dates}
     ).astype(np.int16)
+    fp["days_since_holiday"] = fp["Date"].map(
+        {d: days_since_holiday(d) for d in unique_dates}
+    ).astype(np.int16)
+    fp["is_pre_holiday"] = fp["Date"].map(
+        {d: is_pre_holiday(d) for d in unique_dates}
+    ).astype(np.int8)
 
     return fp
 
@@ -58,6 +77,8 @@ FEAT_COLS = [
     "txn_count_log",
     "is_holiday",
     "days_to_next_holiday",
+    "days_since_holiday",
+    "is_pre_holiday",
     "dayofweek",
     "dayofmonth",
     "month",

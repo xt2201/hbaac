@@ -23,3 +23,16 @@ MAGIC_MULT_TOP_TIER = 1.0
 MAGIC_MULT_TAIL = 0.85
 TAIL_BLEND_ALPHA = 0.7  # LGBM weight for tail SKUs; rest = DOW seasonal naive
 TOP_BIAS_ENABLED = True  # residual correction for top-50 SKUs from holdout
+
+# V6
+TOP_TIER_200 = 200
+MID_TIER_TXN = 100
+LGBM_SEEDS = [42, 123, 456, 789, 2024]
+CATBOOST_SEEDS = [42, 123, 456]
+HOLDOUT_START = "2025-08-09"
+DIRECT_MAX_TRAIN_ROWS = 800_000
+OPTUNA_TRIALS = 50
+ENSEMBLE_BLEND_PATH = PROC_DIR / "ensemble_weights.json"
+DIRECT_BLEND_PATH = PROC_DIR / "direct_blend_alphas.json"
+TOP_BIAS_MATRIX_PATH = PROC_DIR / "top_bias_matrix.npy"
+FEATURE_PANEL_V6 = PROC_DIR / "feature_panel_v6.parquet"

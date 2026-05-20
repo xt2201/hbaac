@@ -111,3 +111,76 @@ def print_eval_report(
     print(f"    Fold B (public window {valid_start.date()}..):              {wrmsse_public:.6f}")
     print(f"    Fold C (private proxy {private_start.date()}..):            {wrmsse_private:.6f}")
     return report
+
+
+def eval_horizon_buckets(
+    daily_qty: pd.DataFrame,
+    preds_56: np.ndarray,
+    sub_skus: list,
+    sku_weights: pd.DataFrame,
+    anchor_end: pd.Timestamp,
+    horizons: list[int] | None = None,
+) -> dict:
+    """
+    Evaluate WRMSSE over horizon buckets on holdout actuals.
+    preds_56: shape (n_skus, 56) — columns are h=1..56 from anchor_end+1 day.
+    anchor_end: last day of features (e.g. TRAIN_END); h=1 is anchor_end+1 day.
+    """
+    if horizons is None:
+        horizons = list(range(1, 57))
+
+    h_max = preds_56.shape[1]
+    weights = np.array(
+        [float(sku_weights.loc[s, "weight"]) if s in sku_weights.index else 0.0 for s in sub_skus]
+    )
+    denoms = np.array(
+        [
+            float(sku_weights.loc[s, "wrmsse_denom"]) if s in sku_weights.index else 1e-8
+            for s in sub_skus
+        ]
+    )
+
+    def _score_for_h_set(h_list: list[int]) -> float:
+        y_true_list = []
+        y_pred_list = []
+        for i, sku in enumerate(sub_skus):
+            yt = []
+            yp = []
+            for h in h_list:
+                if h > h_max:
+                    continue
+                d = anchor_end + pd.Timedelta(days=h)
+                if sku in daily_qty.columns and d in daily_qty.index:
+                    yt.append(float(daily_qty.loc[d, sku]))
+                else:
+                    yt.append(0.0)
+                yp.append(float(preds_56[i, h - 1]))
+            y_true_list.append(yt)
+            y_pred_list.append(yp)
+        return compute_wrmsse(
+            np.array(y_true_list, dtype=np.float32),
+            np.array(y_pred_list, dtype=np.float32),
+            weights,
+            denoms,
+        )
+
+    h_public = [h for h in horizons if h <= 28]
+    h_private = [h for h in horizons if h > 28]
+
+    report = {
+        "all": _score_for_h_set(horizons),
+        "h_le_28": _score_for_h_set(h_public) if h_public else 0.0,
+        "h_gt_28": _score_for_h_set(h_private) if h_private else 0.0,
+        "h_1_14": _score_for_h_set([h for h in horizons if h <= 14]),
+        "h_15_28": _score_for_h_set([h for h in horizons if 14 < h <= 28]),
+        "h_29_42": _score_for_h_set([h for h in horizons if 28 < h <= 42]),
+        "h_43_56": _score_for_h_set([h for h in horizons if h > 42]),
+    }
+    return report
+
+
+def print_horizon_report(report: dict, prefix: str = "") -> None:
+    print(f"\n  {prefix}Horizon WRMSSE buckets:")
+    for k, v in report.items():
+        print(f"    {k:12s}: {v:.6f}")
+
