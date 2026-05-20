@@ -1,11 +1,12 @@
-# Datasets & Large Files
-dataset/
+# Datasets & Large Files (competition CSVs tracked in dataset/)
 data/
 processed/
 models/
 submissions/
 eda_output/
 *.csv
+!dataset/
+!dataset/*.csv
 *.zip
 *.tar.gz
 *.parquet

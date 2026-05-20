@@ -34,9 +34,9 @@ pip install -r requirements.txt
 
 **Requirements:** Python 3.10+, ~8 GB disk for `processed/`, **16 GB+ RAM** recommended (feature panel ~17M rows). For full ensemble + direct training, **32 GB RAM** is safer.
 
-### 2. Dataset (not in git)
+### 2. Dataset (included in repo)
 
-Create `dataset/` and add competition files:
+Competition files are committed under `dataset/` (~46 MB):
 
 ```text
 dataset/
@@ -44,7 +44,7 @@ dataset/
   sample_submission.csv
 ```
 
-Download from the competition page and place both files there.
+After `git clone`, no extra download is needed.
 
 ### 3. EDA (optional, ~1 min)
 
