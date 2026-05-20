@@ -79,6 +79,13 @@ python src/feature_builder.py
 python src/forecaster.py
 ```
 
+Tune `MAGIC_MULT` on holdout, then re-forecast without retraining:
+
+```bash
+python scripts/tune_magic.py
+python src/forecaster.py --forecast-only
+```
+
 EDA:
 
 ```bash

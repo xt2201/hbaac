@@ -18,5 +18,7 @@ TOP_TIER_N = 50
 TAIL_TXN_MAX = 10
 P90_CAP_MULT = 1.5
 
-MAGIC_MULT_DEFAULT = 0.96
+MAGIC_MULT_DEFAULT = 0.88  # tuned via scripts/tune_magic.py holdout
 MAGIC_MULT_TOP_TIER = 1.0
+MAGIC_MULT_TAIL = 0.85
+TAIL_BLEND_ALPHA = 0.7  # LGBM weight for tail SKUs; rest = DOW seasonal naive

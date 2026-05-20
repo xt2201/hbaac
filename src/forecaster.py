@@ -2,6 +2,7 @@
 Step 4: V5 Forecaster — EDA-driven WRMSSE pipeline
 """
 
+import argparse
 import warnings
 
 import lightgbm as lgb
@@ -13,11 +14,13 @@ from config import (
     DATA_START,
     HORIZON,
     MAGIC_MULT_DEFAULT,
+    MAGIC_MULT_TAIL,
     MAGIC_MULT_TOP_TIER,
     MODEL_DIR,
     P90_CAP_MULT,
     PROC_DIR,
     SUB_DIR,
+    TAIL_BLEND_ALPHA,
     TAIL_TXN_MAX,
     TOP_TIER_N,
     TRAIN_END,
@@ -25,8 +28,17 @@ from config import (
     VAL_DAYS,
 )
 from eval_wrmsse import load_sku_weights
+from v5_features import ALL_HOLIDAYS, FEAT_COLS, days_to_next_holiday, enrich_panel
 
 warnings.filterwarnings("ignore")
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--forecast-only",
+    action="store_true",
+    help="Skip training; load models/lgbm_v5.txt and only forecast",
+)
+args = parser.parse_args()
 
 print("=" * 70)
 print("HBAAC  |  Step 4: V5 Forecaster")
@@ -37,23 +49,7 @@ VALID_START_TS = pd.Timestamp(VALID_START)
 VAL_START_TS = TRAIN_END_TS - pd.Timedelta(days=VAL_DAYS - 1)
 T0 = pd.Timestamp(DATA_START)
 
-# ─── Holidays ─────────────────────────────────────────────────────────────────
-tet_dates = pd.to_datetime(
-    ["2021-02-12", "2022-02-01", "2023-01-22", "2024-02-10", "2025-01-29"]
-)
-other_holidays = []
-for y in range(2020, 2027):
-    other_holidays.extend([f"{y}-01-01", f"{y}-04-30", f"{y}-05-01", f"{y}-09-02"])
-all_holidays = pd.Index(tet_dates.tolist() + pd.to_datetime(other_holidays).tolist())
-
-unique_dates_cache = None
-date_to_hol_map = None
-
-
-def days_to_next_holiday(d: pd.Timestamp) -> int:
-    fut = all_holidays[all_holidays >= d]
-    return (fut.min() - d).days if len(fut) > 0 else 999
-
+all_holidays = ALL_HOLIDAYS
 
 # ─── Load submission SKUs ─────────────────────────────────────────────────────
 print("\n[1/7] Loading data …")
@@ -72,179 +68,101 @@ print(f"  Sub SKUs: {len(sub_skus):,}  |  Top tier: {len(top_tier_skus)}")
 print("\n[2/7] Building V5 features on panel …")
 fp = pd.read_parquet(PROC_DIR / "feature_panel.parquet")
 fp["Date"] = pd.to_datetime(fp["Date"])
-fp = fp.sort_values(["ItemCode", "Date"]).reset_index(drop=True)
+fp = enrich_panel(fp, sub_skus)
 
-fp["daily_price"] = np.where(fp["qty"] > 0, fp["sales_amount"] / fp["qty"], np.nan)
-fp["last_known_price"] = fp.groupby("ItemCode")["daily_price"].ffill().fillna(0)
-fp["price_lag1"] = fp.groupby("ItemCode")["last_known_price"].shift(1).astype(np.float32)
-fp.drop(columns=["daily_price", "last_known_price"], inplace=True)
+model_path = MODEL_DIR / "lgbm_v5.txt"
+wrmsse_holdout = None
 
-fp["ItemCode_cat"] = fp["ItemCode"].astype(sku_cat_dtype).cat.codes
-days_diff = (fp["Date"] - TRAIN_END_TS).dt.days
-fp["decay_weight"] = np.clip(np.exp(days_diff / 730.0), 0.1, 1.0)
+if args.forecast_only and model_path.exists():
+    print("\n[3/7] Skipping training (--forecast-only) …")
+    model = lgb.Booster(model_file=str(model_path))
+    print(f"  Loaded {model_path}")
+else:
+    # ─── Train LGBM ───────────────────────────────────────────────────────────
+    print("\n[3/7] Training LGBM V5 …")
+    mask_train = fp["Date"] < VAL_START_TS
+    mask_val = fp["Date"] >= VAL_START_TS
 
-is_sale = (fp["qty"] > 0).astype(int)
-sale_blocks = is_sale.groupby(fp["ItemCode"]).cumsum()
-fp["days_since_last_sale"] = fp.groupby(["ItemCode", sale_blocks]).cumcount().astype(np.float32)
-fp["days_since_last_sale_lag1"] = (
-    fp.groupby("ItemCode")["days_since_last_sale"].shift(1).fillna(0).astype(np.float32)
-)
-fp.drop(columns=["days_since_last_sale"], inplace=True)
+    X_train = fp.loc[mask_train, FEAT_COLS]
+    y_train = fp.loc[mask_train, "qty"]
+    w_train = (
+        fp.loc[mask_train, "weight"] / np.sqrt(fp.loc[mask_train, "wrmsse_denom"])
+    ).values * fp.loc[mask_train, "decay_weight"].values
 
-fp["is_holiday"] = fp["Date"].isin(all_holidays).astype(np.int8)
-fp["days_to_next_holiday"] = fp["Date"].map(
-    {d: days_to_next_holiday(d) for d in fp["Date"].unique()}
-).astype(np.int16)
+    X_val = fp.loc[mask_val, FEAT_COLS]
+    y_val = fp.loc[mask_val, "qty"]
+    w_val = (fp.loc[mask_val, "weight"] / np.sqrt(fp.loc[mask_val, "wrmsse_denom"])).values
 
-FEAT_COLS = [
-    "ItemCode_cat",
-    "price_lag1",
-    "days_since_last_sale_lag1",
-    "return_rate_28d",
-    "txn_count_log",
-    "is_holiday",
-    "days_to_next_holiday",
-    "dayofweek",
-    "dayofmonth",
-    "month",
-    "quarter",
-    "dayofyear",
-    "weekofyear",
-    "year",
-    "is_weekend",
-    "is_saturday",
-    "is_sunday",
-    "is_october",
-    "is_month_end",
-    "is_month_start",
-    "trend",
-    "sin_month",
-    "cos_month",
-    "sin_dow",
-    "cos_dow",
-    "sku_mean",
-    "sku_std",
-    "sku_median",
-    "sku_max",
-    "sku_p90",
-    "sku_active_rate",
-    "lag_1",
-    "lag_2",
-    "lag_3",
-    "lag_7",
-    "lag_14",
-    "lag_21",
-    "lag_28",
-    "lag_35",
-    "lag_42",
-    "lag_56",
-    "lag_364",
-    "roll_mean_7",
-    "roll_std_7",
-    "roll_max_7",
-    "roll_median_7",
-    "roll_mean_14",
-    "roll_std_14",
-    "roll_max_14",
-    "roll_median_14",
-    "roll_mean_28",
-    "roll_std_28",
-    "roll_max_28",
-    "roll_median_28",
-    "roll_mean_56",
-    "roll_std_56",
-    "roll_max_56",
-    "roll_median_56",
-    "expand_mean",
-]
+    print(f"  Train rows: {X_train.shape[0]:,}  Val rows: {X_val.shape[0]:,}")
 
-# ─── Train LGBM ───────────────────────────────────────────────────────────────
-print("\n[3/7] Training LGBM V5 …")
-mask_train = fp["Date"] < VAL_START_TS
-mask_val = fp["Date"] >= VAL_START_TS
+    dtrain = lgb.Dataset(
+        X_train,
+        label=y_train,
+        weight=w_train,
+        categorical_feature=["ItemCode_cat"],
+        feature_name=FEAT_COLS,
+        free_raw_data=True,
+    )
+    dval = lgb.Dataset(
+        X_val,
+        label=y_val,
+        weight=w_val,
+        categorical_feature=["ItemCode_cat"],
+        reference=dtrain,
+        free_raw_data=True,
+    )
 
-X_train = fp.loc[mask_train, FEAT_COLS]
-y_train = fp.loc[mask_train, "qty"]
-w_train = (
-    fp.loc[mask_train, "weight"] / np.sqrt(fp.loc[mask_train, "wrmsse_denom"])
-).values * fp.loc[mask_train, "decay_weight"].values
+    params = {
+        "objective": "tweedie",
+        "tweedie_variance_power": 1.25,
+        "metric": "rmse",
+        "learning_rate": 0.05,
+        "num_leaves": 255,
+        "max_depth": 10,
+        "min_data_in_leaf": 100,
+        "feature_fraction": 0.7,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 1,
+        "lambda_l1": 0.1,
+        "lambda_l2": 0.1,
+        "verbose": -1,
+        "n_jobs": -1,
+        "seed": 42,
+    }
 
-X_val = fp.loc[mask_val, FEAT_COLS]
-y_val = fp.loc[mask_val, "qty"]
-w_val = (fp.loc[mask_val, "weight"] / np.sqrt(fp.loc[mask_val, "wrmsse_denom"])).values
+    model = lgb.train(
+        params=params,
+        train_set=dtrain,
+        num_boost_round=3000,
+        valid_sets=[dval],
+        valid_names=["val"],
+        callbacks=[
+            lgb.early_stopping(150, verbose=True),
+            lgb.log_evaluation(100),
+        ],
+    )
+    model.save_model(str(model_path))
+    print(f"  Model V5 best_iter={model.best_iteration}")
 
-print(f"  Train rows: {X_train.shape[0]:,}  Val rows: {X_val.shape[0]:,}")
+    print("\n[4/7] Holdout WRMSSE (last 28d of train) …")
+    holdout_start = TRAIN_END_TS - pd.Timedelta(days=27)
+    mask_holdout = (fp["Date"] >= holdout_start) & (fp["Date"] <= TRAIN_END_TS)
+    holdout_pred = model.predict(fp.loc[mask_holdout, FEAT_COLS])
+    holdout_df = fp.loc[mask_holdout, ["ItemCode", "Date", "qty", "weight", "wrmsse_denom"]].copy()
+    holdout_df["pred"] = holdout_pred
 
-dtrain = lgb.Dataset(
-    X_train,
-    label=y_train,
-    weight=w_train,
-    categorical_feature=["ItemCode_cat"],
-    feature_name=FEAT_COLS,
-    free_raw_data=True,
-)
-dval = lgb.Dataset(
-    X_val,
-    label=y_val,
-    weight=w_val,
-    categorical_feature=["ItemCode_cat"],
-    reference=dtrain,
-    free_raw_data=True,
-)
-
-params = {
-    "objective": "tweedie",
-    "tweedie_variance_power": 1.25,
-    "metric": "rmse",
-    "learning_rate": 0.05,
-    "num_leaves": 255,
-    "max_depth": 10,
-    "min_data_in_leaf": 100,
-    "feature_fraction": 0.7,
-    "bagging_fraction": 0.8,
-    "bagging_freq": 1,
-    "lambda_l1": 0.1,
-    "lambda_l2": 0.1,
-    "verbose": -1,
-    "n_jobs": -1,
-    "seed": 42,
-}
-
-model = lgb.train(
-    params=params,
-    train_set=dtrain,
-    num_boost_round=3000,
-    valid_sets=[dval],
-    valid_names=["val"],
-    callbacks=[
-        lgb.early_stopping(150, verbose=True),
-        lgb.log_evaluation(100),
-    ],
-)
-model.save_model(str(MODEL_DIR / "lgbm_v5.txt"))
-print(f"  Model V5 best_iter={model.best_iteration}")
-
-# ─── Holdout WRMSSE (last 28 days of train, aligned) ───────────────────────────
-print("\n[4/7] Holdout WRMSSE (last 28d of train) …")
-holdout_start = TRAIN_END_TS - pd.Timedelta(days=27)
-mask_holdout = (fp["Date"] >= holdout_start) & (fp["Date"] <= TRAIN_END_TS)
-holdout_pred = model.predict(fp.loc[mask_holdout, FEAT_COLS])
-
-holdout_df = fp.loc[mask_holdout, ["ItemCode", "Date", "qty", "weight", "wrmsse_denom"]].copy()
-holdout_df["pred"] = holdout_pred
-
-wrmsse_holdout = 0.0
-for sku in sub_skus:
-    w = float(sku_weights.loc[sku, "weight"]) if sku in sku_weights.index else 0.0
-    if w <= 0:
-        continue
-    denom = float(sku_weights.loc[sku, "wrmsse_denom"]) if sku in sku_weights.index else 1e-8
-    sub = holdout_df[holdout_df["ItemCode"] == sku]
-    if len(sub) == 0:
-        continue
-    rmse = np.sqrt(np.mean((sub["qty"].values - sub["pred"].values) ** 2))
-    wrmsse_holdout += w * (rmse / np.sqrt(denom))
-print(f"  Holdout WRMSSE (aligned {holdout_start.date()}..{TRAIN_END_TS.date()}): {wrmsse_holdout:.6f}")
+    wrmsse_holdout = 0.0
+    for sku in sub_skus:
+        w = float(sku_weights.loc[sku, "weight"]) if sku in sku_weights.index else 0.0
+        if w <= 0:
+            continue
+        denom = float(sku_weights.loc[sku, "wrmsse_denom"]) if sku in sku_weights.index else 1e-8
+        sub = holdout_df[holdout_df["ItemCode"] == sku]
+        if len(sub) == 0:
+            continue
+        rmse = np.sqrt(np.mean((sub["qty"].values - sub["pred"].values) ** 2))
+        wrmsse_holdout += w * (rmse / np.sqrt(denom))
+    print(f"  Holdout WRMSSE (aligned {holdout_start.date()}..{TRAIN_END_TS.date()}): {wrmsse_holdout:.6f}")
 
 # ─── Load daily matrices for recursive forecast ───────────────────────────────
 print("\n[5/7] Recursive 56-day forecast …")
@@ -321,6 +239,14 @@ txn_count_log = np.array([np.log1p(txn_counts.get(s, 0)) for s in sub_skus], dty
 tier_top = np.array([s in top_tier_skus for s in sub_skus])
 tier_tail = np.array([txn_counts.get(s, 0) <= TAIL_TXN_MAX for s in sub_skus])
 
+# DOW seasonal naive (last 56 days, for tail blend)
+recent = daily_qty.iloc[-56:]
+dow_naive = np.zeros((7, len(sub_skus)), dtype=np.float32)
+for dow in range(7):
+    rows = recent.loc[recent.index.dayofweek == dow]
+    if len(rows) > 0:
+        dow_naive[dow, :] = rows.mean(axis=0).values
+
 lgbm_hist = daily_qty.values.astype(np.float32)
 n_hist = len(lgbm_hist)
 lgbm_ext = np.vstack([lgbm_hist, np.zeros((HORIZON, len(sub_skus)), dtype=np.float32)])
@@ -331,7 +257,7 @@ cat_codes = pd.Series(sub_skus).astype(sku_cat_dtype).cat.codes.values
 
 lgbm_preds = np.zeros((HORIZON, len(sub_skus)), dtype=np.float32)
 magic_mult_arr = np.where(tier_top, MAGIC_MULT_TOP_TIER, MAGIC_MULT_DEFAULT).astype(np.float32)
-magic_mult_arr[tier_tail] = 0.85
+magic_mult_arr[tier_tail] = MAGIC_MULT_TAIL
 
 for day_idx, fdate in enumerate(forecast_dates):
     row_idx = n_hist + day_idx
@@ -399,8 +325,13 @@ for day_idx, fdate in enumerate(forecast_dates):
     pred = model.predict(feat)
     pred = pred * magic_mult_arr
 
-    # Tier-3 tail: shrink toward zero
-    pred[tier_tail] *= 0.5
+    # Tail: blend with DOW seasonal naive (last 56d mean)
+    if tier_tail.any():
+        naive_d = dow_naive[dow, :]
+        pred[tier_tail] = (
+            TAIL_BLEND_ALPHA * pred[tier_tail]
+            + (1.0 - TAIL_BLEND_ALPHA) * naive_d[tier_tail]
+        )
 
     # P90 cap (skip top tier)
     p90 = lgbm_stats_df["sku_p90"].values
@@ -424,7 +355,10 @@ preds_val = np.clip(lgbm_preds[:28, :].T, 0, None)
 preds_eval = np.clip(lgbm_preds[28:, :].T, 0, None)
 
 print("\n[6/7] WRMSSE report …")
-print(f"  Holdout WRMSSE (aligned last 28d of train): {wrmsse_holdout:.6f}")
+if wrmsse_holdout is not None:
+    print(f"  Holdout WRMSSE (aligned last 28d of train): {wrmsse_holdout:.6f}")
+else:
+    print("  Holdout WRMSSE: skipped (forecast-only mode)")
 
 # ─── Save submission ──────────────────────────────────────────────────────────
 print("\n[7/7] Saving submission V5 …")
