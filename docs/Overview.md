@@ -9,7 +9,6 @@ The Public score (Validation) is computed on the first 28 days of the horizon (F
 # Competition flow
 The top teams (lowest WRMSSE on the Private leaderboard) will advance to the next round. Lower score is better.
 
-```markdown
 # Evaluation
 
 ## Metric: WRMSSE
@@ -75,7 +74,6 @@ $$WRMSSE = \sum_i RMSSE_i \times w_i$$
 - **Final submission deadline:** 2026-05-21 23:59.
 - **Private leaderboard + list of advancing teams:** announced right after the deadline.
 
-```markdown
 # Dataset Description
 
 ## Files provided
@@ -117,7 +115,7 @@ SKU-00002_validation,0,0,...,0
 ...
 SKU-00001_evaluation,0,0,...,0
 SKU-00002_evaluation,0,0,...,0
-...
+```
 
 Each row contains an `id` that is a concatenation of an `<ItemCode>` and a suffix, which is either:
 - `validation` — corresponding to the Public leaderboard, **F1..F28 = 2025-09-06 → 2025-10-03**

@@ -1,192 +1,185 @@
 """
-Step 3: Feature Engineering (Memory-Efficient Version)
-=======================================================
-Key insight: ~98% zeros → we only need feature rows where SKU was EVER active.
-Strategy:
-  1. Filter panel to "active SKUs" (had any sales in training)
-  2. For active SKUs, keep only their actual active date range (first_sale..last_date)
-  3. This reduces rows from 28M → ~2M manageable rows
-  4. For zero-weight / inactive SKUs → predict 0 (handled at forecast step)
+Step 3: Feature Engineering (V5 — EDA-driven)
 """
 
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-PROC = ROOT / "processed"
-PROC.mkdir(exist_ok=True)
+from config import DATA_DIR, PROC_DIR, DATA_START, TRAIN_START, TRAIN_END, VAL_DAYS
 
 print("=" * 70)
-print("HBAAC  |  Step 3: Feature Engineering (Memory-Efficient)")
+print("HBAAC  |  Step 3: Feature Engineering (V5)")
 print("=" * 70)
 
-# ─── 1. Load raw aggregated data (not full panel) ─────────────────────────────
-print("\n[1/7] Loading data …")
+TRAIN_END_TS = pd.Timestamp(TRAIN_END)
+TRAIN_START_TS = pd.Timestamp(TRAIN_START)
+DATA_START_TS = pd.Timestamp(DATA_START)
+VAL_START_TS = TRAIN_END_TS - pd.Timedelta(days=VAL_DAYS - 1)
 
-def parse_vn_number(s):
-    if pd.isna(s): return np.nan
-    s = str(s).strip().replace(" ", "")
-    if s.count(",") == 1 and s.index(",") >= len(s) - 5:
-        s = s.replace(",", ".")
-    else:
-        s = s.replace(",", "")
-    try: return float(s)
-    except: return np.nan
-
-train = pd.read_csv(ROOT / "dataset" / "train.csv", dtype=str)
-train["Date"]        = pd.to_datetime(train["Date"])
-train["Quantity"]    = pd.to_numeric(train["Quantity"],    errors="coerce").fillna(0).astype(int)
+# ─── 1. Load raw data ─────────────────────────────────────────────────────────
+print("\n[1/8] Loading data …")
+train = pd.read_csv(DATA_DIR / "train.csv", dtype=str)
+train["Date"] = pd.to_datetime(train["Date"])
+train["Quantity"] = pd.to_numeric(train["Quantity"], errors="coerce").fillna(0).astype(int)
 train["SalesAmount"] = pd.to_numeric(train["SalesAmount"], errors="coerce").fillna(0)
 train["Cost Amount"] = pd.to_numeric(train["Cost Amount"], errors="coerce").fillna(0)
-
 print(f"  Loaded {len(train):,} rows, {train['ItemCode'].nunique():,} SKUs")
 
-# ─── 2. Daily net qty aggregation ────────────────────────────────────────────
-print("\n[2/7] Aggregating daily net qty …")
+# ─── 2. Daily aggregation ─────────────────────────────────────────────────────
+print("\n[2/8] Aggregating daily net qty …")
 daily_net = (
     train.groupby(["Date", "ItemCode"])
     .agg(
-        net_qty      = ("Quantity",    "sum"),
-        sales_amount = ("SalesAmount", "sum"),
-        cost_amount  = ("Cost Amount", "sum"),
+        net_qty=("Quantity", "sum"),
+        sales_amount=("SalesAmount", "sum"),
+        cost_amount=("Cost Amount", "sum"),
+        return_qty=("Quantity", lambda x: x[x < 0].sum()),  # negative sum
+        txn_count=("Quantity", "count"),
     )
     .reset_index()
 )
+daily_net["return_qty"] = daily_net["return_qty"].abs()
 daily_net["qty"] = daily_net["net_qty"].clip(lower=0)
 
-# ─── 3. Load profit weights ───────────────────────────────────────────────────────
-print("\n[3/7] Loading profit weights …")
-sku_profit = pd.read_csv(PROC / "sku_weights.csv")
+# ─── 3. Load profit weights ───────────────────────────────────────────────────
+print("\n[3/8] Loading profit weights …")
+sku_profit = pd.read_csv(PROC_DIR / "sku_weights.csv")
 
-# ─── 4. Build panel only for ACTIVE SKUs ─────────────────────────────────────
-print("\n[4/7] Building panel for active SKUs only …")
-# Active = had at least 1 positive sale
-active_skus = daily_net.loc[daily_net["qty"] > 0, "ItemCode"].unique()
-print(f"  Active SKUs: {len(active_skus):,}  (inactive will be predicted as 0)")
-
-# For each active SKU, date range from its FIRST ever sale to train end
-sku_first_sale = daily_net[daily_net["qty"] > 0].groupby("ItemCode")["Date"].min().reset_index()
-sku_first_sale.columns = ["ItemCode", "first_sale"]
-
-TRAIN_END = pd.Timestamp("2025-09-05")
-all_dates  = pd.date_range("2020-11-17", TRAIN_END, freq="D")
-
-# Build panel per active SKU
-panels = []
-for sku in active_skus:
-    first_d = sku_first_sale.loc[sku_first_sale["ItemCode"] == sku, "first_sale"].values[0]
-    # Start 56 days before first sale to allow lag features to warm up
-    start_d = max(pd.Timestamp("2020-11-17"), pd.Timestamp(first_d) - pd.Timedelta(days=56))
-    dates = pd.date_range(start_d, TRAIN_END, freq="D")
-    df = pd.DataFrame({"Date": dates, "ItemCode": sku})
-    panels.append(df)
-
-print(f"  Building panel rows …")
-panel = pd.concat(panels, ignore_index=True)
-print(f"  Panel shape before merge: {panel.shape}")
-
-# Merge actual sales
-panel = panel.merge(daily_net[["Date","ItemCode","qty","net_qty","sales_amount","cost_amount"]],
-                    on=["Date","ItemCode"], how="left")
-panel["qty"]          = panel["qty"].fillna(0)
-panel["net_qty"]      = panel["net_qty"].fillna(0)
-panel["sales_amount"] = panel["sales_amount"].fillna(0)
-panel["cost_amount"]  = panel["cost_amount"].fillna(0)
-
-# Merge weights
-panel = panel.merge(sku_profit[["ItemCode","weight","profit", "wrmsse_denom"]], on="ItemCode", how="left")
-panel["weight"] = panel["weight"].fillna(0)
-panel["wrmsse_denom"] = panel["wrmsse_denom"].fillna(1e-8)
-panel = panel.sort_values(["ItemCode","Date"]).reset_index(drop=True)
-print(f"  Panel shape after merge: {panel.shape}")
-
-# ─── 5. Feature engineering ──────────────────────────────────────────────────
-print("\n[5/7] Adding features …")
-
-# Calendar
-panel["dayofweek"]   = panel["Date"].dt.dayofweek.astype(np.int8)
-panel["dayofmonth"]  = panel["Date"].dt.day.astype(np.int8)
-panel["month"]       = panel["Date"].dt.month.astype(np.int8)
-panel["quarter"]     = panel["Date"].dt.quarter.astype(np.int8)
-panel["dayofyear"]   = panel["Date"].dt.dayofyear.astype(np.int16)
-panel["weekofyear"]  = panel["Date"].dt.isocalendar().week.astype(np.int8)
-panel["year"]        = panel["Date"].dt.year.astype(np.int16)
-panel["is_weekend"]  = (panel["dayofweek"] >= 5).astype(np.int8)
-panel["is_month_end"]   = panel["Date"].dt.is_month_end.astype(np.int8)
-panel["is_month_start"] = panel["Date"].dt.is_month_start.astype(np.int8)
-panel["trend"]       = (panel["Date"] - panel["Date"].min()).dt.days.astype(np.int16)
-panel["sin_month"]   = np.sin(2 * np.pi * panel["month"] / 12).astype(np.float32)
-panel["cos_month"]   = np.cos(2 * np.pi * panel["month"] / 12).astype(np.float32)
-panel["sin_dow"]     = np.sin(2 * np.pi * panel["dayofweek"] / 7).astype(np.float32)
-panel["cos_dow"]     = np.cos(2 * np.pi * panel["dayofweek"] / 7).astype(np.float32)
-
-# SKU-level stats (properly computed over full available history)
-# We calculate total_active_days and total_days to get correct active_rate
+# SKU stats: training cutoff (no leakage into LGBM val period)
+print("\n[4/8] SKU stats (cutoff before val period) …")
+stats_cutoff = daily_net[daily_net["Date"] < VAL_START_TS]
 sku_stats = (
-    daily_net.groupby("ItemCode")["qty"]
-    .agg(sku_mean="mean", 
-         sku_std="std", 
-         sku_median="median",
-         sku_max="max", 
-         sku_active_rate=lambda x: (x > 0).mean())
+    stats_cutoff.groupby("ItemCode")["qty"]
+    .agg(
+        sku_mean="mean",
+        sku_std="std",
+        sku_median="median",
+        sku_max="max",
+        sku_active_rate=lambda x: (x > 0).mean(),
+    )
     .reset_index()
 )
-
-# For sku_p90, we only want the 90th percentile of NON-ZERO days
 sku_p90 = (
-    daily_net[daily_net["qty"] > 0].groupby("ItemCode")["qty"]
+    stats_cutoff[stats_cutoff["qty"] > 0]
+    .groupby("ItemCode")["qty"]
     .quantile(0.9)
     .reset_index()
     .rename(columns={"qty": "sku_p90"})
 )
-
 sku_stats = sku_stats.merge(sku_p90, on="ItemCode", how="left").fillna({"sku_p90": 0})
 
-panel = panel.merge(sku_stats, on="ItemCode", how="left").fillna({
-    "sku_mean":0, "sku_std":0, "sku_median":0, "sku_max":0, "sku_p90":0, "sku_active_rate":0
-})
+txn_per_sku = train.groupby("ItemCode").size().reset_index(name="txn_count_total")
+txn_per_sku["txn_count_log"] = np.log1p(txn_per_sku["txn_count_total"]).astype(np.float32)
+sku_stats = sku_stats.merge(txn_per_sku[["ItemCode", "txn_count_log"]], on="ItemCode", how="left")
+sku_stats["txn_count_log"] = sku_stats["txn_count_log"].fillna(0).astype(np.float32)
 
-for c in ["sku_mean","sku_std","sku_median","sku_max","sku_p90","sku_active_rate"]:
+# ─── 5. Build panel for active SKUs ─────────────────────────────────────────
+print("\n[5/8] Building panel for active SKUs …")
+active_skus = daily_net.loc[daily_net["qty"] > 0, "ItemCode"].unique()
+print(f"  Active SKUs: {len(active_skus):,}")
+
+sku_first_sale = (
+    daily_net[daily_net["qty"] > 0].groupby("ItemCode")["Date"].min().reset_index()
+)
+sku_first_sale.columns = ["ItemCode", "first_sale"]
+
+panels = []
+for sku in active_skus:
+    first_d = sku_first_sale.loc[sku_first_sale["ItemCode"] == sku, "first_sale"].values[0]
+    start_d = max(DATA_START_TS, TRAIN_START_TS, pd.Timestamp(first_d) - pd.Timedelta(days=400))
+    dates = pd.date_range(start_d, TRAIN_END_TS, freq="D")
+    panels.append(pd.DataFrame({"Date": dates, "ItemCode": sku}))
+
+panel = pd.concat(panels, ignore_index=True)
+panel = panel.merge(
+    daily_net[
+        ["Date", "ItemCode", "qty", "net_qty", "sales_amount", "cost_amount", "return_qty"]
+    ],
+    on=["Date", "ItemCode"],
+    how="left",
+)
+for c in ["qty", "net_qty", "sales_amount", "cost_amount", "return_qty"]:
+    panel[c] = panel[c].fillna(0)
+
+panel = panel.merge(sku_profit[["ItemCode", "weight", "profit", "wrmsse_denom"]], on="ItemCode", how="left")
+panel["weight"] = panel["weight"].fillna(0)
+panel["wrmsse_denom"] = panel["wrmsse_denom"].fillna(1e-8)
+panel = panel.sort_values(["ItemCode", "Date"]).reset_index(drop=True)
+
+# ─── 6. Calendar & EDA features ───────────────────────────────────────────────
+print("\n[6/8] Adding calendar & EDA features …")
+panel["dayofweek"] = panel["Date"].dt.dayofweek.astype(np.int8)
+panel["dayofmonth"] = panel["Date"].dt.day.astype(np.int8)
+panel["month"] = panel["Date"].dt.month.astype(np.int8)
+panel["quarter"] = panel["Date"].dt.quarter.astype(np.int8)
+panel["dayofyear"] = panel["Date"].dt.dayofyear.astype(np.int16)
+panel["weekofyear"] = panel["Date"].dt.isocalendar().week.astype(np.int8)
+panel["year"] = panel["Date"].dt.year.astype(np.int16)
+panel["is_saturday"] = (panel["dayofweek"] == 5).astype(np.int8)
+panel["is_sunday"] = (panel["dayofweek"] == 6).astype(np.int8)
+panel["is_weekend"] = (panel["dayofweek"] >= 5).astype(np.int8)
+panel["is_october"] = (panel["month"] == 10).astype(np.int8)
+panel["is_month_end"] = panel["Date"].dt.is_month_end.astype(np.int8)
+panel["is_month_start"] = panel["Date"].dt.is_month_start.astype(np.int8)
+panel["trend"] = (panel["Date"] - DATA_START_TS).dt.days.astype(np.int16)
+panel["sin_month"] = np.sin(2 * np.pi * panel["month"] / 12).astype(np.float32)
+panel["cos_month"] = np.cos(2 * np.pi * panel["month"] / 12).astype(np.float32)
+panel["sin_dow"] = np.sin(2 * np.pi * panel["dayofweek"] / 7).astype(np.float32)
+panel["cos_dow"] = np.cos(2 * np.pi * panel["dayofweek"] / 7).astype(np.float32)
+
+panel = panel.merge(sku_stats, on="ItemCode", how="left").fillna(
+    {
+        "sku_mean": 0,
+        "sku_std": 0,
+        "sku_median": 0,
+        "sku_max": 0,
+        "sku_p90": 0,
+        "sku_active_rate": 0,
+        "txn_count_log": 0,
+    }
+)
+for c in ["sku_mean", "sku_std", "sku_median", "sku_max", "sku_p90", "sku_active_rate"]:
     panel[c] = panel[c].astype(np.float32)
 
-# Lag features
+# Return rate rolling (per SKU)
+g_ret = panel.groupby("ItemCode")
+panel["return_rate_28d"] = (
+    g_ret["return_qty"]
+    .transform(lambda x: x.shift(1).rolling(28, min_periods=1).sum())
+    / (g_ret["qty"].transform(lambda x: x.shift(1).rolling(28, min_periods=1).sum()) + 1e-6)
+).astype(np.float32)
+panel["return_rate_28d"] = panel["return_rate_28d"].clip(0, 1).fillna(0)
+
+# Lag / rolling / YoY
 g = panel.groupby("ItemCode")["qty"]
-for lag in [1, 2, 3, 7, 14, 21, 28, 35, 42, 56]:
+for lag in [1, 2, 3, 7, 14, 21, 28, 35, 42, 56, 364]:
     panel[f"lag_{lag}"] = g.shift(lag).astype(np.float32)
 
-# Rolling features
 for w in [7, 14, 28, 56]:
     shifted = g.shift(1)
-    rolled  = shifted.rolling(w, min_periods=1)
-    panel[f"roll_mean_{w}"]    = rolled.mean().astype(np.float32)
-    panel[f"roll_std_{w}"]     = rolled.std().fillna(0).astype(np.float32)
-    panel[f"roll_max_{w}"]     = rolled.max().astype(np.float32)
-    panel[f"roll_median_{w}"]  = rolled.median().astype(np.float32)
+    rolled = shifted.rolling(w, min_periods=1)
+    panel[f"roll_mean_{w}"] = rolled.mean().astype(np.float32)
+    panel[f"roll_std_{w}"] = rolled.std().fillna(0).astype(np.float32)
+    panel[f"roll_max_{w}"] = rolled.max().astype(np.float32)
+    panel[f"roll_median_{w}"] = rolled.median().astype(np.float32)
 
-# Expanding mean (long-term trend per SKU)
 panel["expand_mean"] = g.shift(1).expanding(1).mean().astype(np.float32)
 
-print(f"  Features added. Panel shape: {panel.shape}")
-
-# ─── 6. Filter: keep only rows with lag_7 available ──────────────────────────
-print("\n[6/7] Filtering training rows (lag_7 must exist) …")
-train_panel = panel.dropna(subset=["lag_7"]).copy()
-lag_like_cols = [c for c in train_panel.columns
-                 if c.startswith("lag_") or c.startswith("roll_") or c.startswith("expand_")]
+# ─── 7. Filter training rows ──────────────────────────────────────────────────
+print("\n[7/8] Filtering training rows …")
+train_panel = panel[(panel["Date"] >= TRAIN_START_TS) & panel["lag_7"].notna()].copy()
+lag_like_cols = [
+    c
+    for c in train_panel.columns
+    if c.startswith("lag_") or c.startswith("roll_") or c == "expand_mean"
+]
 train_panel[lag_like_cols] = train_panel[lag_like_cols].fillna(0)
-print(f"  Training rows: {len(train_panel):,}")
+print(f"  Training rows: {len(train_panel):,}  (from {TRAIN_START})")
 
-# ─── 7. Save ─────────────────────────────────────────────────────────────────
-print("\n[7/7] Saving …")
-train_panel.to_parquet(PROC / "feature_panel.parquet", index=False, compression="zstd")
+# ─── 8. Save ──────────────────────────────────────────────────────────────────
+print("\n[8/8] Saving …")
+train_panel.to_parquet(PROC_DIR / "feature_panel.parquet", index=False, compression="zstd")
+sku_stats.to_csv(PROC_DIR / "sku_stats.csv", index=False)
 print(f"  Saved → processed/feature_panel.parquet  {train_panel.shape}")
-
-# Print feature list
-feat_cols = [c for c in train_panel.columns
-             if c not in ["Date","ItemCode","net_qty","qty","profit","weight",
-                          "sales_amount","cost_amount"]]
-print(f"\n  Total features: {len(feat_cols)}")
-print(f"  Feature names: {feat_cols}")
-print(f"\n  Memory: {train_panel.memory_usage(deep=True).sum()/1e6:.1f} MB")
+print(f"  Saved → processed/sku_stats.csv")
 print("\nFeature engineering complete!")

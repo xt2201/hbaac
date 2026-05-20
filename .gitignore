@@ -10,6 +10,7 @@ eda_output/
 *.tar.gz
 *.parquet
 *.txt
+!requirements.txt
 
 # Python & Jupyter Notebooks
 __pycache__/
@@ -34,6 +35,7 @@ wheels/
 .installed.cfg
 *.egg
 .ipynb_checkpoints/
+plan/
 
 # Environments
 .env

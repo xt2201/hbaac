@@ -8,8 +8,8 @@ SRC = ROOT / "src"
 
 steps = [
     ("preprocessor.py", "Data Preprocessing & WRMSSE Weights"),
-    ("feature_builder.py", "Feature Engineering (Lags, Rolling, etc.)"),
-    ("forecaster.py", "Grandmaster Model Training & Forecasting"),
+    ("feature_builder.py", "Feature Engineering V5 (EDA-driven)"),
+    ("forecaster.py", "V5 Model Training, Forecast & Submission"),
 ]
 
 print("=" * 70)

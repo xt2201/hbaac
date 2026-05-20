@@ -1,84 +1,92 @@
 # HBAAC: Vietnamese Auto Parts Demand Forecasting
 
-This repository contains the codebase and models for predicting daily sales quantity for the next 56 days across roughly **15,972 SKUs** of a Vietnamese Auto Parts distributor, based on nearly 5 years of transaction history (2020-11-17 to 2025-09-05).
+Predict daily sales quantity for the next **56 days** across **15,972 SKUs** (Vietnamese auto parts distributor), using transaction history **2020-11-17 → 2025-09-05**.
 
-## 🎯 Goal
-The core objective is to build a robust retail demand forecasting system:
-* Capture seasonality, trend, and lifecycle for best-selling SKUs.
-* Avoid over-predicting sparse/rare SKUs in the long tail.
-* Handle return transactions (negative quantities) appropriately.
-* Ensure all final SKU predictions for the 56-day forecast horizon are non-negative.
+## Goal
 
----
+- Capture seasonality and trend for high-profit SKUs
+- Avoid over-predicting sparse SKUs (long tail)
+- Handle returns appropriately; final predictions must be **non-negative**
+- Optimize **WRMSSE** (profit-weighted RMSSE)
 
-## 📊 Dataset Structure
-The raw data is stored in the `dataset/` directory (ignored by git due to file size):
-* **`train.csv`**: Detailed transaction history of **711,980 rows** (2020-11-17 → 2025-09-05). Each row represents a transaction line with details such as `ItemCode`, `Quantity`, `UnitPrice`, `SalesAmount`, `Unit Cost`, and `Cost Amount`.
-* **`sample_submission.csv`**: Submission template containing **31,944 rows × 29 columns**. It lists two rows per SKU (`<SKU>_validation` for Public score and `<SKU>_evaluation` for Private score) each with 28 forecast columns `F1` to `F28`.
+## Evaluation: WRMSSE
 
----
+Per-SKU RMSSE is scaled by a naive one-step denominator, then aggregated with **profit weights** from training. Lower is better.
 
-## 📈 Evaluation Metric: WRMSSE
-Submissions are evaluated using the **Weighted Root Mean Squared Scaled Error (WRMSSE)**.
-* **RMSSE** is computed per SKU, scaling the forecast error by the historical one-step naive baseline error of that SKU (called the `wrmsse_denominator`).
-* **WRMSSE** aggregates individual RMSSEs using a profit-based weight. The weight for each SKU is its share of total profit over the training set.
+- **Public** (`_validation`): F1–F28 = 2025-09-06 → 2025-10-03
+- **Private** (`_evaluation`): F1–F28 = 2025-10-04 → 2025-10-31
 
----
+## Dataset
 
-## 🚀 Pipeline Overview: The "Grandmaster" Model (V4)
+Place files in `dataset/` (gitignored):
 
-After identifying weaknesses in V2 and V3, this pipeline introduces **5 Kaggle Grandmaster optimizations** specifically tailored for M5-style WRMSSE forecasting:
+| File | Description |
+|------|-------------|
+| `train.csv` | 711,980 transaction rows |
+| `sample_submission.csv` | 31,944 × 29 template |
 
-1. **Price Dynamics**: Although we don't have explicit future prices, we reconstruct the `last_known_price` using `SalesAmount / Quantity`. Price shifts are a massive predictor of retail demand.
-2. **Vietnamese Holidays**: Introduced explicit boolean flags and `days_to_next_holiday` tracking for Tết (Movable Lunar New Year), 30/4, 1/5, and 2/9.
-3. **Categorical Entity Embeddings**: We feed `ItemCode` natively as a categorical feature to LightGBM. This replaces manual "categories" and lets the tree-splits learn the bias/intercept for each individual SKU directly.
-4. **Time-Decay Weights**: 5 years of history is too long (Concept Drift). The model scales sample weights by $e^{(days\_diff / 730)}$, giving recent 2024-2025 data exponentially higher importance than 2020-2021 data, without throwing it away.
-5. **Zero-Streak Magic Feature**: For highly intermittent items, the model tracks `days_since_last_sale`. This allows the tree to learn the exact probabilistic cycle of rare bulk buyers.
+## Pipeline (V5)
 
-### Pseudo-WRMSSE Back-test Results
-| Method | Pseudo-WRMSSE | Notes |
-|--------|---------------|-------|
-| Seasonal Naive | 3.314 | Standard baseline |
-| V2 (Manual Heuristics) | 0.518 | High risk of overfitting |
-| V3 (WRMSSE Loss Only) | 0.575 | Robust, mathematical proxy |
-| **V4 (Grandmaster Model)** | **0.569** | **BEST: Tweedie + Advanced Features** |
-
----
-
-## 📂 Repository Structure
 ```text
 hbaac/
-├── dataset/                    # Raw CSV datasets
-├── processed/                  # Intermediate processed parquet files
-├── models/
-│   └── lgbm_v4_grandmaster.txt # Best global model
-├── submissions/
-│   └── submission_v4_grandmaster.csv # ✅ FINAL SUBMISSION
-├── 01_eda.py                   
-├── 02_preprocessing.py         
-├── 03_feature_engineering.py   
-├── 08_advanced_model.py        # V3 Pipeline
-├── 09_grandmaster_model.py     # V4 Pipeline (Grandmaster)
-├── run_all.py                  # Full pipeline runner
-└── README.md                   
+├── dataset/                 # train.csv, sample_submission.csv
+├── processed/               # parquet + sku_weights.csv
+├── models/                  # lgbm_v5.txt
+├── submissions/             # submission_v5.csv
+├── eda_output/              # EDA charts
+├── src/
+│   ├── config.py
+│   ├── preprocessor.py
+│   ├── feature_builder.py
+│   ├── forecaster.py        # V5 train + forecast
+│   └── eval_wrmsse.py
+├── scripts/
+│   ├── pipeline.py          # run full pipeline
+│   └── run_eda.py
+└── docs/Overview.md
 ```
 
----
+### V5 improvements (from EDA)
 
-## ⚙️ Setup & Reproduction
+1. **Train from 2022** — regime shift (~9× volume)
+2. **`is_saturday` / `is_sunday`** — Sunday ≈ closed (hard-zero at forecast)
+3. **Return rate features** — post-2022 returns ~3.5%
+4. **`is_october` + lag-364** — Private window is full October
+5. **SKU stats without val leakage** — stats cutoff before last 56 train days
+6. **Tiered post-process** — top-50 SKU (no shrink), tail ≤10 txns (strong shrink), P90 cap
+7. **Aligned WRMSSE holdout** — last 28 days of train
 
-### 1. Create virtual environment
+## Setup
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install pandas numpy lightgbm scikit-learn matplotlib pyarrow
+pip install -r requirements.txt
 ```
 
-### 2. Run full pipeline
+## Run
+
 ```bash
 source .venv/bin/activate
-python run_all.py --from 9
+python scripts/pipeline.py
 ```
 
-### 3. Submit
-Upload `submissions/submission_v4_grandmaster.csv` to Kaggle.
+Or step by step:
+
+```bash
+python src/preprocessor.py
+python src/feature_builder.py
+python src/forecaster.py
+```
+
+EDA:
+
+```bash
+python scripts/run_eda.py
+```
+
+## Submit
+
+Upload `submissions/submission_v5.csv` to Kaggle.
+
+Code reproduction form: https://forms.gle/obAgu3dTSBT1oDGJA (deadline 23:59 21/5 GMT+7).
