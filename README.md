@@ -53,8 +53,9 @@ hbaac/
 3. **Return rate features** — post-2022 returns ~3.5%
 4. **`is_october` + lag-364** — Private window is full October
 5. **SKU stats without val leakage** — stats cutoff before last 56 train days
-6. **Tiered post-process** — top-50 SKU (no shrink), tail ≤10 txns (strong shrink), P90 cap
-7. **Aligned WRMSSE holdout** — last 28 days of train
+6. **Tiered post-process** — top-50 SKU (no shrink), tail ≤10 txns (DOW blend), P90 cap
+7. **Top-50 bias correction** — residual calibration from holdout (WRMSSE 0.492 → 0.473)
+8. **Aligned WRMSSE holdout** — last 28 days of train
 
 ## Setup
 

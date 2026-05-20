@@ -13,21 +13,18 @@ from config import (
     DATA_DIR,
     DATA_START,
     HORIZON,
-    MAGIC_MULT_DEFAULT,
-    MAGIC_MULT_TAIL,
-    MAGIC_MULT_TOP_TIER,
     MODEL_DIR,
-    P90_CAP_MULT,
     PROC_DIR,
     SUB_DIR,
-    TAIL_BLEND_ALPHA,
     TAIL_TXN_MAX,
+    TOP_BIAS_ENABLED,
     TOP_TIER_N,
     TRAIN_END,
     VALID_START,
     VAL_DAYS,
 )
 from eval_wrmsse import load_sku_weights
+from postprocess import apply_postprocess, build_magic_mult_array
 from v5_features import ALL_HOLIDAYS, FEAT_COLS, days_to_next_holiday, enrich_panel
 
 warnings.filterwarnings("ignore")
@@ -51,6 +48,94 @@ T0 = pd.Timestamp(DATA_START)
 
 all_holidays = ALL_HOLIDAYS
 
+
+def _wrmsse_from_df(holdout_df: pd.DataFrame, sub_skus: list, sku_weights: pd.DataFrame) -> float:
+    score = 0.0
+    for sku in sub_skus:
+        w = float(sku_weights.loc[sku, "weight"]) if sku in sku_weights.index else 0.0
+        if w <= 0:
+            continue
+        denom = float(sku_weights.loc[sku, "wrmsse_denom"]) if sku in sku_weights.index else 1e-8
+        sub = holdout_df[holdout_df["ItemCode"] == sku]
+        if len(sub) == 0:
+            continue
+        rmse = np.sqrt(np.mean((sub["qty"].values - sub["pred"].values) ** 2))
+        score += w * (rmse / np.sqrt(denom))
+    return score
+
+
+def _eval_holdout(
+    model,
+    fp: pd.DataFrame,
+    sub_skus: list,
+    sku_weights: pd.DataFrame,
+    top_tier_skus: set,
+    dow_naive: np.ndarray | None = None,
+    sku_p90_arr: np.ndarray | None = None,
+    tier_tail: np.ndarray | None = None,
+) -> tuple[float, np.ndarray]:
+    """Evaluate holdout with post-process; fit top-SKU bias residuals."""
+    print("\n[4/7] Holdout WRMSSE (last 28d of train) …")
+    holdout_start = TRAIN_END_TS - pd.Timedelta(days=27)
+    mask_holdout = (fp["Date"] >= holdout_start) & (fp["Date"] <= TRAIN_END_TS)
+    holdout = fp.loc[mask_holdout, ["ItemCode", "Date", "qty", "dayofweek"]].copy()
+    holdout["raw"] = model.predict(fp.loc[mask_holdout, FEAT_COLS])
+
+    n = len(sub_skus)
+    sku_to_i = {s: i for i, s in enumerate(sub_skus)}
+    tier_top = np.array([s in top_tier_skus for s in sub_skus])
+    if tier_tail is None:
+        tier_tail = np.zeros(n, dtype=bool)
+    magic = build_magic_mult_array(n, tier_top, tier_tail)
+    if sku_p90_arr is None:
+        sku_p90_arr = np.zeros(n, dtype=np.float32)
+    if dow_naive is None:
+        dow_naive = np.zeros((7, n), dtype=np.float32)
+
+    parts = []
+    for date, grp in holdout.groupby("Date"):
+        dow = int(pd.Timestamp(date).dayofweek)
+        pred = np.zeros(n, dtype=np.float32)
+        for _, row in grp.iterrows():
+            pred[sku_to_i[row["ItemCode"]]] = row["raw"]
+        pred = apply_postprocess(
+            pred, dow, tier_top, tier_tail, magic, dow_naive[dow], sku_p90_arr, top_bias=None
+        )
+        for _, row in grp.iterrows():
+            i = sku_to_i[row["ItemCode"]]
+            parts.append((row["ItemCode"], row["qty"], float(pred[i])))
+
+    holdout_df = pd.DataFrame(parts, columns=["ItemCode", "qty", "pred"])
+    wrmsse_base = _wrmsse_from_df(holdout_df, sub_skus, sku_weights)
+    top_bias = np.zeros(n, dtype=np.float32)
+
+    if TOP_BIAS_ENABLED:
+        for sku in top_tier_skus:
+            sub = holdout_df[holdout_df["ItemCode"] == sku]
+            if len(sub) == 0:
+                continue
+            i = sku_to_i[sku]
+            top_bias[i] = float(np.clip((sub["qty"] - sub["pred"]).mean(), -50, 50))
+
+        holdout_df["pred"] = holdout_df.apply(
+            lambda r: r["pred"] + top_bias[sku_to_i[r["ItemCode"]]]
+            if r["ItemCode"] in top_tier_skus
+            else r["pred"],
+            axis=1,
+        )
+        holdout_df["pred"] = holdout_df["pred"].clip(lower=0)
+        wrmsse_bias = _wrmsse_from_df(holdout_df, sub_skus, sku_weights)
+        print(f"  Holdout WRMSSE base postprocess: {wrmsse_base:.6f}")
+        print(f"  Holdout WRMSSE + top bias:      {wrmsse_bias:.6f}")
+        pd.DataFrame({"ItemCode": sub_skus, "top_bias": top_bias}).to_csv(
+            PROC_DIR / "top_sku_bias.csv", index=False
+        )
+        return wrmsse_bias, top_bias
+
+    print(f"  Holdout WRMSSE (aligned {holdout_start.date()}..{TRAIN_END_TS.date()}): {wrmsse_base:.6f}")
+    return wrmsse_base, top_bias
+
+
 # ─── Load submission SKUs ─────────────────────────────────────────────────────
 print("\n[1/7] Loading data …")
 sample_sub = pd.read_csv(DATA_DIR / "sample_submission.csv")
@@ -72,6 +157,7 @@ fp = enrich_panel(fp, sub_skus)
 
 model_path = MODEL_DIR / "lgbm_v5.txt"
 wrmsse_holdout = None
+top_bias_arr = np.zeros(len(sub_skus), dtype=np.float32)
 
 if args.forecast_only and model_path.exists():
     print("\n[3/7] Skipping training (--forecast-only) …")
@@ -143,26 +229,6 @@ else:
     )
     model.save_model(str(model_path))
     print(f"  Model V5 best_iter={model.best_iteration}")
-
-    print("\n[4/7] Holdout WRMSSE (last 28d of train) …")
-    holdout_start = TRAIN_END_TS - pd.Timedelta(days=27)
-    mask_holdout = (fp["Date"] >= holdout_start) & (fp["Date"] <= TRAIN_END_TS)
-    holdout_pred = model.predict(fp.loc[mask_holdout, FEAT_COLS])
-    holdout_df = fp.loc[mask_holdout, ["ItemCode", "Date", "qty", "weight", "wrmsse_denom"]].copy()
-    holdout_df["pred"] = holdout_pred
-
-    wrmsse_holdout = 0.0
-    for sku in sub_skus:
-        w = float(sku_weights.loc[sku, "weight"]) if sku in sku_weights.index else 0.0
-        if w <= 0:
-            continue
-        denom = float(sku_weights.loc[sku, "wrmsse_denom"]) if sku in sku_weights.index else 1e-8
-        sub = holdout_df[holdout_df["ItemCode"] == sku]
-        if len(sub) == 0:
-            continue
-        rmse = np.sqrt(np.mean((sub["qty"].values - sub["pred"].values) ** 2))
-        wrmsse_holdout += w * (rmse / np.sqrt(denom))
-    print(f"  Holdout WRMSSE (aligned {holdout_start.date()}..{TRAIN_END_TS.date()}): {wrmsse_holdout:.6f}")
 
 # ─── Load daily matrices for recursive forecast ───────────────────────────────
 print("\n[5/7] Recursive 56-day forecast …")
@@ -255,9 +321,13 @@ forecast_dates = pd.date_range(VALID_START_TS, periods=HORIZON, freq="D")
 col_map = {c: i for i, c in enumerate(FEAT_COLS)}
 cat_codes = pd.Series(sub_skus).astype(sku_cat_dtype).cat.codes.values
 
+sku_p90_arr = lgbm_stats_df["sku_p90"].values.astype(np.float32)
+wrmsse_holdout, top_bias_arr = _eval_holdout(
+    model, fp, sub_skus, sku_weights, top_tier_skus, dow_naive, sku_p90_arr, tier_tail
+)
+
 lgbm_preds = np.zeros((HORIZON, len(sub_skus)), dtype=np.float32)
-magic_mult_arr = np.where(tier_top, MAGIC_MULT_TOP_TIER, MAGIC_MULT_DEFAULT).astype(np.float32)
-magic_mult_arr[tier_tail] = MAGIC_MULT_TAIL
+magic_mult_arr = build_magic_mult_array(len(sub_skus), tier_top, tier_tail)
 
 for day_idx, fdate in enumerate(forecast_dates):
     row_idx = n_hist + day_idx
@@ -323,26 +393,16 @@ for day_idx, fdate in enumerate(forecast_dates):
         feat[:, col_map["expand_mean"]] = lgbm_ext[:row_idx, :].mean(axis=0)
 
     pred = model.predict(feat)
-    pred = pred * magic_mult_arr
-
-    # Tail: blend with DOW seasonal naive (last 56d mean)
-    if tier_tail.any():
-        naive_d = dow_naive[dow, :]
-        pred[tier_tail] = (
-            TAIL_BLEND_ALPHA * pred[tier_tail]
-            + (1.0 - TAIL_BLEND_ALPHA) * naive_d[tier_tail]
-        )
-
-    # P90 cap (skip top tier)
-    p90 = lgbm_stats_df["sku_p90"].values
-    cap = p90 * P90_CAP_MULT
-    pred = np.where(tier_top, pred, np.minimum(pred, cap))
-
-    pred = np.clip(pred, 0, None)
-
-    # Sunday hard-zero (EDA: 570 qty / 5 years)
-    if dow == 6:
-        pred[:] = 0.0
+    pred = apply_postprocess(
+        pred,
+        dow,
+        tier_top,
+        tier_tail,
+        magic_mult_arr,
+        dow_naive[dow, :],
+        sku_p90_arr,
+        top_bias=top_bias_arr if TOP_BIAS_ENABLED else None,
+    )
 
     lgbm_preds[day_idx, :] = pred
     lgbm_ext[row_idx, :] = pred
@@ -376,6 +436,8 @@ assert (final_sub[f_cols].values >= 0).all()
 out_path = SUB_DIR / "submission_v5.csv"
 final_sub.to_csv(out_path, index=False)
 print(f"  Saved → {out_path}")
+if TOP_BIAS_ENABLED:
+    print(f"  Top-SKU bias applied ({(top_bias_arr != 0).sum()} SKUs)")
 print(f"  Val  mean={preds_val.mean():.4f}  max={preds_val.max():.2f}")
 print(f"  Eval mean={preds_eval.mean():.4f}  max={preds_eval.max():.2f}")
 print("\nDone!")
