@@ -1,0 +1,30 @@
+{
+    "model": "nhits",
+    "wrmsse": 4.034222373689002,
+    "trial_number": 34,
+    "params": {
+        "hidden_size": 256,
+        "n_layers": 1,
+        "lr": 0.0038244698891995287,
+        "dropout": 0.07975553721711105,
+        "weight_decay": 0.0007355258263980202,
+        "batch_size": 128,
+        "max_steps": 1000,
+        "loss": "huber",
+        "huber_delta": 4.273203503437268,
+        "pool_kernels": [
+            16,
+            4,
+            1
+        ],
+        "freq_downsamples": [
+            24,
+            6,
+            1
+        ]
+    },
+    "user_attrs": {
+        "rmsse_mean": 48.32733917236328,
+        "rmsse_p90": 0.9785814881324768
+    }
+}
