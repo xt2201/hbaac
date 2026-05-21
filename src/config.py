@@ -36,3 +36,7 @@ ENSEMBLE_BLEND_PATH = PROC_DIR / "ensemble_weights.json"
 DIRECT_BLEND_PATH = PROC_DIR / "direct_blend_alphas.json"
 TOP_BIAS_MATRIX_PATH = PROC_DIR / "top_bias_matrix.npy"
 FEATURE_PANEL_V6 = PROC_DIR / "feature_panel_v6.parquet"
+
+# V5.1 (expanded calendar features, same post-process as V5)
+MODEL_V51 = MODEL_DIR / "lgbm_v51.txt"
+SUBMISSION_V51 = SUB_DIR / "submission_v51.csv"

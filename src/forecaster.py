@@ -3,6 +3,7 @@ Step 4: V5 Forecaster — EDA-driven WRMSSE pipeline
 """
 
 import argparse
+import json
 import warnings
 
 import lightgbm as lgb
@@ -33,12 +34,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--forecast-only",
     action="store_true",
-    help="Skip training; load models/lgbm_v5.txt and only forecast",
+    help="Skip training; load saved model and only forecast",
+)
+parser.add_argument(
+    "--tag",
+    default="v5",
+    choices=("v5", "v51"),
+    help="Model/submission tag: v5 (baseline) or v51 (expanded ALL_HOLIDAYS)",
 )
 args = parser.parse_args()
 
 print("=" * 70)
-print("HBAAC  |  Step 4: V5 Forecaster")
+label = "V5.1" if args.tag == "v51" else "V5"
+print(f"HBAAC  |  Step 4: {label} Forecaster")
 print("=" * 70)
 
 TRAIN_END_TS = pd.Timestamp(TRAIN_END)
@@ -155,7 +163,7 @@ fp = pd.read_parquet(PROC_DIR / "feature_panel.parquet")
 fp["Date"] = pd.to_datetime(fp["Date"])
 fp = enrich_panel(fp, sub_skus)
 
-model_path = MODEL_DIR / "lgbm_v5.txt"
+model_path = MODEL_DIR / f"lgbm_{args.tag}.txt"
 wrmsse_holdout = None
 top_bias_arr = np.zeros(len(sub_skus), dtype=np.float32)
 
@@ -165,7 +173,7 @@ if args.forecast_only and model_path.exists():
     print(f"  Loaded {model_path}")
 else:
     # ─── Train LGBM ───────────────────────────────────────────────────────────
-    print("\n[3/7] Training LGBM V5 …")
+    print(f"\n[3/7] Training LGBM {label} …")
     mask_train = fp["Date"] < VAL_START_TS
     mask_val = fp["Date"] >= VAL_START_TS
 
@@ -215,6 +223,12 @@ else:
         "n_jobs": -1,
         "seed": 42,
     }
+    v51_cfg_path = PROC_DIR / "v51_best_config.json"
+    if args.tag == "v51" and v51_cfg_path.exists():
+        with open(v51_cfg_path) as f:
+            tuned = json.load(f).get("lgbm_params", {})
+        params.update(tuned)
+        print(f"  Using tuned LGBM params from {v51_cfg_path.name}")
 
     model = lgb.train(
         params=params,
@@ -228,7 +242,7 @@ else:
         ],
     )
     model.save_model(str(model_path))
-    print(f"  Model V5 best_iter={model.best_iteration}")
+    print(f"  Model {label} best_iter={model.best_iteration}")
 
 # ─── Load daily matrices for recursive forecast ───────────────────────────────
 print("\n[5/7] Recursive 56-day forecast …")
@@ -421,7 +435,7 @@ else:
     print("  Holdout WRMSSE: skipped (forecast-only mode)")
 
 # ─── Save submission ──────────────────────────────────────────────────────────
-print("\n[7/7] Saving submission V5 …")
+print(f"\n[7/7] Saving submission {label} …")
 val_df = pd.DataFrame(preds_val, columns=f_cols)
 val_df.insert(0, "id", [f"{s}_validation" for s in sub_skus])
 eval_df = pd.DataFrame(preds_eval, columns=f_cols)
@@ -433,7 +447,7 @@ final_sub = final_sub.set_index("id").reindex(sample_sub["id"].values).reset_ind
 assert len(final_sub) == 31944
 assert (final_sub[f_cols].values >= 0).all()
 
-out_path = SUB_DIR / "submission_v5.csv"
+out_path = SUB_DIR / f"submission_{args.tag}.csv"
 final_sub.to_csv(out_path, index=False)
 print(f"  Saved → {out_path}")
 if TOP_BIAS_ENABLED:

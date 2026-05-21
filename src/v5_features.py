@@ -4,16 +4,12 @@ import numpy as np
 import pandas as pd
 
 from config import TRAIN_END
+from vn_calendar import build_all_holidays_feature_dates
 
 TRAIN_END_TS = pd.Timestamp(TRAIN_END)
 
-tet_dates = pd.to_datetime(
-    ["2021-02-12", "2022-02-01", "2023-01-22", "2024-02-10", "2025-01-29"]
-)
-other_holidays = []
-for y in range(2020, 2027):
-    other_holidays.extend([f"{y}-01-01", f"{y}-04-30", f"{y}-05-01", f"{y}-09-02"])
-ALL_HOLIDAYS = pd.Index(tet_dates.tolist() + pd.to_datetime(other_holidays).tolist())
+# V5.1: Tet windows, Hung Kings, bridges, year-end 2020–21, between New Year–Tet 2021
+ALL_HOLIDAYS = pd.Index(build_all_holidays_feature_dates())
 
 
 def days_to_next_holiday(d: pd.Timestamp) -> int:

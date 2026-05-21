@@ -50,9 +50,12 @@ After `git clone`, no extra download is needed.
 
 ```bash
 python scripts/run_eda_v2.py
+python scripts/audit_calendar_full.py   # classify all 1,754 days (VN/intl holidays)
 ```
 
-Generates `eda_output/` (gitignored): charts 01–18, `EDA_REPORT.md`, `unmapped_calendar_gaps.csv`.
+Generates `eda_output/` (gitignored): charts 01–18, `EDA_REPORT.md`, `CALENDAR_AUDIT_REPORT.md` (appendix: all 343 missing days), `calendar_all_days.csv`.
+
+**V6 postmortem:** see `docs/V6_ISSUE_TRACE.md` — `submission_v6.csv` was miscalibrated; prefer V5 for Kaggle until fixed.
 
 ### 4. V6 pipeline — recommended order
 
@@ -174,6 +177,19 @@ python src/forecaster.py
 
 Upload `submissions/submission_v5.csv`. Holdout WRMSSE ~0.473 with top-50 bias.
 
+### V5.1 (expanded calendar — recommended after EDA)
+
+```bash
+python scripts/pipeline_v51.py
+# or forecast-only if models/lgbm_v51.txt exists:
+python src/forecaster.py --tag v51 --forecast-only
+```
+
+- `ALL_HOLIDAYS` synced from `vn_calendar.build_all_holidays_feature_dates()` (~161 dates vs ~27 legacy)
+- Same LGBM + post-process as V5 (top-50 bias, tail shrink, Sunday zero)
+- Output: `submissions/submission_v51.csv`, `models/lgbm_v51.txt`
+- **Do not use V6** until recalibrated (`docs/V6_ISSUE_TRACE.md`)
+
 ### V5 highlights
 
 - Train from 2022 (regime shift)
@@ -190,4 +206,4 @@ Upload `submissions/submission_v5.csv`. Holdout WRMSSE ~0.473 with top-50 bias.
 - Croston + two-stage tail; WRMSSE feval for early stopping
 - Features: `global_qty_index`, `is_pre_holiday`, `days_since_holiday`, Sep-2025 mask
 
-See `eda_output/EDA_REPORT.md` after running `run_eda_v2.py` for EDA → feature mapping.
+See `eda_output/EDA_REPORT.md` after `python scripts/run_eda_v2.py` (charts 01–22). Deep calendar: `audit_calendar_deep.py` → `DEEP_CALENDAR_ANALYSIS.md`.
