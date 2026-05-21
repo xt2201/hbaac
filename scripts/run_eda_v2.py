@@ -425,7 +425,7 @@ miss_cal["year"] = miss_cal["Date"].dt.year
 miss_cal["classification"] = "MISSING_SUNDAY_CLOSED"
 miss_cal.loc[miss_cal["dayofweek"] != 6, "classification"] = "MISSING_NON_SUNDAY"
 miss_cal.loc[
-    miss_cal["dayofweek"] != 6 & miss_cal["Date"].isin(ALL_HOLIDAYS),
+    (miss_cal["dayofweek"] != 6) & (miss_cal["Date"].isin(ALL_HOLIDAYS)),
     "classification",
 ] = "MISSING_VN_HOLIDAY_TAGGED"
 fig, ax = plt.subplots(figsize=(10, 4))

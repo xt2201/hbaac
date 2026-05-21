@@ -416,10 +416,16 @@ def main() -> None:
     parser.add_argument("--optuna-trials", type=int, default=60)
     parser.add_argument("--skip-optuna", action="store_true", help="Use existing lgbm_v51.txt")
     parser.add_argument("--skip-forecast", action="store_true")
+    parser.add_argument(
+        "--skip-retrain",
+        action="store_true",
+        help="Keep existing lgbm_v51.txt after post-process tune",
+    )
     parser.add_argument("--postprocess-only", action="store_true", help="Alias for --skip-optuna")
     args = parser.parse_args()
     if args.postprocess_only:
         args.skip_optuna = True
+        args.skip_retrain = True
 
     print("=" * 70)
     print("HBAAC | V5.1 thorough tuning")
@@ -498,11 +504,13 @@ def main() -> None:
     print(f"\nSaved → {V51_CONFIG_PATH}")
     patch_config_py(pp_best)
 
-    # Retrain final model with best LGBM params for production
-    print("\n[3/3] Final LGBM train with best hyperparameters …")
-    final_model = train_lgbm(fp, lgbm_params, num_boost_round=3000)
-    final_model.save_model(str(model_path))
-    print(f"  Saved → {model_path}")
+    if args.skip_retrain:
+        print(f"\n[3/3] Skipping LGBM retrain — using {model_path}")
+    else:
+        print("\n[3/3] Final LGBM train with best hyperparameters …")
+        final_model = train_lgbm(fp, lgbm_params, num_boost_round=3000)
+        final_model.save_model(str(model_path))
+        print(f"  Saved → {model_path}")
 
     if not args.skip_forecast:
         print("\nRunning forecaster --tag v51 …")
