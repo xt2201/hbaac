@@ -16,12 +16,12 @@ HORIZON = 56
 VAL_DAYS = 56
 TOP_TIER_N = 50
 TAIL_TXN_MAX = 10
-P90_CAP_MULT = 1.5
+P90_CAP_MULT = 1.0  # tuned via scripts/tune_v51.py
 
-MAGIC_MULT_DEFAULT = 0.88  # tuned via scripts/tune_magic.py holdout
-MAGIC_MULT_TOP_TIER = 1.0
-MAGIC_MULT_TAIL = 0.85
-TAIL_BLEND_ALPHA = 0.7  # LGBM weight for tail SKUs; rest = DOW seasonal naive
+MAGIC_MULT_DEFAULT = 0.82  # tuned via scripts/tune_v51.py
+MAGIC_MULT_TOP_TIER = 0.9  # tuned via scripts/tune_v51.py
+MAGIC_MULT_TAIL = 0.74  # tuned via scripts/tune_v51.py
+TAIL_BLEND_ALPHA = 0.55  # tuned via scripts/tune_v51.py
 TOP_BIAS_ENABLED = True  # residual correction for top-50 SKUs from holdout
 
 # V6

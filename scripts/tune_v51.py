@@ -161,7 +161,9 @@ def eval_holdout_wrmsse(
     return _wrmsse_holdout_df(holdout_df, sub_skus, sku_weights), top_bias
 
 
-def _prepare_holdout_cache(fp: pd.DataFrame, sub_skus: list, model: lgb.Booster) -> tuple:
+def _prepare_holdout_cache(
+    fp: pd.DataFrame, sub_skus: list, model: lgb.Booster
+) -> tuple[dict, dict, np.ndarray, np.ndarray, np.ndarray]:
     mask = (fp["Date"] >= HOLDOUT_START) & (fp["Date"] <= TRAIN_END_TS)
     hold = fp.loc[mask, ["ItemCode", "Date", "qty", "dayofweek"]].copy()
     hold["raw"] = model.predict(fp.loc[mask, FEAT_COLS])
@@ -179,7 +181,60 @@ def _prepare_holdout_cache(fp: pd.DataFrame, sub_skus: list, model: lgb.Booster)
             qty[i] = row["qty"]
         raw_by_date[date] = raw
         qty_by_date[date] = qty
-    return raw_by_date, qty_by_date
+    dates = sorted(raw_by_date.keys())
+    raw_stack = np.stack([raw_by_date[d] for d in dates], axis=0)
+    qty_stack = np.stack([qty_by_date[d] for d in dates], axis=0)
+    dows = np.array([pd.Timestamp(d).dayofweek for d in dates], dtype=np.int8)
+    return raw_by_date, qty_by_date, raw_stack, qty_stack, dows
+
+
+def eval_holdout_wrmsse_fast(
+    raw_stack: np.ndarray,
+    qty_stack: np.ndarray,
+    dows: np.ndarray,
+    sub_skus: list,
+    sku_weights: pd.DataFrame,
+    tier_top: np.ndarray,
+    tier_tail: np.ndarray,
+    dow_naive: np.ndarray,
+    sku_p90: np.ndarray,
+    magic_default: float,
+    magic_tail: float,
+    magic_top: float,
+    tail_alpha: float,
+    p90_mult: float,
+) -> float:
+    n_days, n = raw_stack.shape
+    magic = np.full(n, magic_default, dtype=np.float32)
+    magic[tier_top] = magic_top
+    magic[tier_tail] = magic_tail
+    preds = np.empty_like(raw_stack)
+    for t in range(n_days):
+        dow = int(dows[t])
+        preds[t] = _apply_postprocess_day(
+            raw_stack[t],
+            dow,
+            tier_top,
+            tier_tail,
+            magic,
+            dow_naive[dow],
+            sku_p90,
+            tail_alpha,
+            p90_mult,
+        )
+    for i in np.where(tier_top)[0]:
+        bias = float(np.clip((qty_stack[:, i] - preds[:, i]).mean(), -50, 50))
+        preds[:, i] = np.clip(preds[:, i] + bias, 0, None)
+
+    score = 0.0
+    for i, sku in enumerate(sub_skus):
+        w = float(sku_weights.loc[sku, "weight"]) if sku in sku_weights.index else 0.0
+        if w <= 0:
+            continue
+        denom = float(sku_weights.loc[sku, "wrmsse_denom"]) if sku in sku_weights.index else 1e-8
+        rmse = np.sqrt(np.mean((qty_stack[:, i] - preds[:, i]) ** 2))
+        score += w * (rmse / np.sqrt(denom))
+    return score
 
 
 def _build_dow_naive(daily_qty: pd.DataFrame, sub_skus: list) -> np.ndarray:
@@ -251,23 +306,24 @@ def run_optuna(
             "lambda_l2": trial.suggest_float("lambda_l2", 1e-3, 0.5, log=True),
         }
         model = train_lgbm(fp, params, num_boost_round=2000)
-        raw_by_date, qty_by_date = _prepare_holdout_cache(fp, sub_skus, model)
-        score, _ = eval_holdout_wrmsse(
-            raw_by_date,
-            qty_by_date,
+        _, _, raw_stack, qty_stack, dows = _prepare_holdout_cache(fp, sub_skus, model)
+        tier_top = np.array([s in top_tier for s in sub_skus])
+        return eval_holdout_wrmsse_fast(
+            raw_stack,
+            qty_stack,
+            dows,
             sub_skus,
             sku_weights,
-            top_tier,
+            tier_top,
             tier_tail,
             dow_naive,
             sku_p90,
-            magic_default=0.88,
-            magic_tail=0.85,
-            magic_top=1.0,
-            tail_alpha=0.7,
-            p90_mult=1.5,
+            0.88,
+            0.85,
+            1.0,
+            0.7,
+            1.5,
         )
-        return score
 
     study = optuna.create_study(
         direction="minimize",
@@ -281,113 +337,122 @@ def run_optuna(
 
 
 def grid_postprocess(
-    raw_by_date: dict,
-    qty_by_date: dict,
+    raw_stack: np.ndarray,
+    qty_stack: np.ndarray,
+    dows: np.ndarray,
     sub_skus: list,
     sku_weights: pd.DataFrame,
-    top_tier: set,
+    tier_top: np.ndarray,
     tier_tail: np.ndarray,
     dow_naive: np.ndarray,
     sku_p90: np.ndarray,
 ) -> dict:
     best = {"score": float("inf")}
-    grid_magic = np.arange(0.84, 0.971, 0.03)
-    grid_tail_magic = [0.76, 0.80, 0.84, 0.88, 0.92]
+    grid_magic = [0.84, 0.87, 0.90, 0.93, 0.96]
+    grid_tail_magic = [0.78, 0.82, 0.86, 0.90]
     grid_top_magic = [0.95, 1.0, 1.05]
-    grid_alpha = np.arange(0.55, 0.861, 0.075)
-    grid_p90 = [1.0, 1.25, 1.5, 1.75, 2.0]
+    grid_alpha = [0.55, 0.625, 0.70, 0.775, 0.85]
+    grid_p90 = [1.0, 1.25, 1.5, 1.75]
 
-    total = (
-        len(grid_magic) * len(grid_tail_magic) * len(grid_top_magic) * len(grid_alpha) * len(grid_p90)
-    )
-    print(f"\nPost-process grid: {total} combinations …")
-    done = 0
-    for md in grid_magic:
-        for mt in grid_tail_magic:
-            for mtop in grid_top_magic:
-                for alpha in grid_alpha:
-                    for p90 in grid_p90:
-                        score, _ = eval_holdout_wrmsse(
-                            raw_by_date,
-                            qty_by_date,
-                            sub_skus,
-                            sku_weights,
-                            top_tier,
-                            tier_tail,
-                            dow_naive,
-                            sku_p90,
-                            float(md),
-                            float(mt),
-                            float(mtop),
-                            float(alpha),
-                            float(p90),
-                        )
-                        done += 1
-                        if score < best["score"]:
-                            best = {
-                                "score": score,
-                                "MAGIC_MULT_DEFAULT": float(md),
-                                "MAGIC_MULT_TAIL": float(mt),
-                                "MAGIC_MULT_TOP_TIER": float(mtop),
-                                "TAIL_BLEND_ALPHA": float(alpha),
-                                "P90_CAP_MULT": float(p90),
-                            }
-    print(f"  Best post-process WRMSSE: {best['score']:.6f}")
+    combos = [
+        (md, mt, mtop, alpha, p90)
+        for md in grid_magic
+        for mt in grid_tail_magic
+        for mtop in grid_top_magic
+        for alpha in grid_alpha
+        for p90 in grid_p90
+    ]
+    total = len(combos)
+    print(f"\nPost-process grid: {total} combinations …", flush=True)
+    for done, (md, mt, mtop, alpha, p90) in enumerate(combos, 1):
+        score = eval_holdout_wrmsse_fast(
+            raw_stack,
+            qty_stack,
+            dows,
+            sub_skus,
+            sku_weights,
+            tier_top,
+            tier_tail,
+            dow_naive,
+            sku_p90,
+            float(md),
+            float(mt),
+            float(mtop),
+            float(alpha),
+            float(p90),
+        )
+        if score < best["score"]:
+            best = {
+                "score": score,
+                "MAGIC_MULT_DEFAULT": float(md),
+                "MAGIC_MULT_TAIL": float(mt),
+                "MAGIC_MULT_TOP_TIER": float(mtop),
+                "TAIL_BLEND_ALPHA": float(alpha),
+                "P90_CAP_MULT": float(p90),
+            }
+        if done % 100 == 0 or done == total:
+            print(f"  {done}/{total}  best={best['score']:.6f}", flush=True)
+    print(f"  Best post-process WRMSSE: {best['score']:.6f}", flush=True)
     return best
 
 
 def fine_grid_postprocess(
-    raw_by_date: dict,
-    qty_by_date: dict,
+    raw_stack: np.ndarray,
+    qty_stack: np.ndarray,
+    dows: np.ndarray,
     sub_skus: list,
     sku_weights: pd.DataFrame,
-    top_tier: set,
+    tier_top: np.ndarray,
     tier_tail: np.ndarray,
     dow_naive: np.ndarray,
     sku_p90: np.ndarray,
     coarse: dict,
 ) -> dict:
-    """Refine around coarse optimum (step 0.01 magic, 0.02 tail)."""
+    """Refine around coarse optimum."""
     best = {k: coarse[k] for k in coarse}
-    best["score"] = coarse["score"]
     md0 = coarse["MAGIC_MULT_DEFAULT"]
     mt0 = coarse["MAGIC_MULT_TAIL"]
     mtop0 = coarse["MAGIC_MULT_TOP_TIER"]
     a0 = coarse["TAIL_BLEND_ALPHA"]
     p0 = coarse["P90_CAP_MULT"]
 
-    for md in np.arange(max(0.80, md0 - 0.04), min(0.99, md0 + 0.041), 0.01):
-        for mt in np.arange(max(0.70, mt0 - 0.06), min(0.95, mt0 + 0.061), 0.02):
-            for mtop in [mtop0 - 0.05, mtop0, mtop0 + 0.05]:
-                if mtop <= 0:
-                    continue
-                for alpha in np.arange(max(0.45, a0 - 0.1), min(0.90, a0 + 0.101), 0.025):
-                    for p90 in np.arange(max(0.9, p0 - 0.3), min(2.2, p0 + 0.301), 0.1):
-                        score, _ = eval_holdout_wrmsse(
-                            raw_by_date,
-                            qty_by_date,
-                            sub_skus,
-                            sku_weights,
-                            top_tier,
-                            tier_tail,
-                            dow_naive,
-                            sku_p90,
-                            float(md),
-                            float(mt),
-                            float(round(mtop, 2)),
-                            float(alpha),
-                            float(p90),
-                        )
-                        if score < best["score"]:
-                            best = {
-                                "score": score,
-                                "MAGIC_MULT_DEFAULT": float(md),
-                                "MAGIC_MULT_TAIL": float(mt),
-                                "MAGIC_MULT_TOP_TIER": float(round(mtop, 2)),
-                                "TAIL_BLEND_ALPHA": float(alpha),
-                                "P90_CAP_MULT": float(round(p90, 2)),
-                            }
-    print(f"  Fine grid WRMSSE: {best['score']:.6f}")
+    combos = [
+        (md, mt, mtop, alpha, p90)
+        for md in np.arange(max(0.82, md0 - 0.03), min(0.98, md0 + 0.031), 0.01)
+        for mt in np.arange(max(0.74, mt0 - 0.04), min(0.94, mt0 + 0.041), 0.02)
+        for mtop in [mtop0 - 0.05, mtop0, mtop0 + 0.05]
+        if mtop > 0
+        for alpha in np.arange(max(0.50, a0 - 0.075), min(0.88, a0 + 0.076), 0.025)
+        for p90 in np.arange(max(1.0, p0 - 0.25), min(2.0, p0 + 0.251), 0.125)
+    ]
+    print(f"\nFine grid: {len(combos)} combinations …", flush=True)
+    for md, mt, mtop, alpha, p90 in combos:
+        score = eval_holdout_wrmsse_fast(
+            raw_stack,
+            qty_stack,
+            dows,
+            sub_skus,
+            sku_weights,
+            tier_top,
+            tier_tail,
+            dow_naive,
+            sku_p90,
+            float(md),
+            float(mt),
+            float(round(mtop, 2)),
+            float(alpha),
+            float(round(p90, 3)),
+        )
+        if score < best["score"]:
+            best = {
+                "score": score,
+                "MAGIC_MULT_DEFAULT": float(md),
+                "MAGIC_MULT_TAIL": float(mt),
+                "MAGIC_MULT_TOP_TIER": float(round(mtop, 2)),
+                "TAIL_BLEND_ALPHA": float(alpha),
+                "P90_CAP_MULT": float(round(p90, 3)),
+            }
+    print(f"  Fine grid WRMSSE: {best['score']:.6f}", flush=True)
     return best
 
 
@@ -481,13 +546,14 @@ def main() -> None:
         )
         model.save_model(str(MODEL_DIR / "lgbm_v51_tuned.txt"))
 
-    print("\n[2/3] Post-process grid + fine search …")
-    raw_by_date, qty_by_date = _prepare_holdout_cache(fp, sub_skus, model)
+    tier_top = np.array([s in top_tier for s in sub_skus])
+    print("\n[2/3] Post-process grid + fine search …", flush=True)
+    _, _, raw_stack, qty_stack, dows = _prepare_holdout_cache(fp, sub_skus, model)
     coarse = grid_postprocess(
-        raw_by_date, qty_by_date, sub_skus, sku_weights, top_tier, tier_tail, dow_naive, sku_p90
+        raw_stack, qty_stack, dows, sub_skus, sku_weights, tier_top, tier_tail, dow_naive, sku_p90
     )
     pp_best = fine_grid_postprocess(
-        raw_by_date, qty_by_date, sub_skus, sku_weights, top_tier, tier_tail, dow_naive, sku_p90, coarse
+        raw_stack, qty_stack, dows, sub_skus, sku_weights, tier_top, tier_tail, dow_naive, sku_p90, coarse
     )
 
     config_out = {
