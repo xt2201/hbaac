@@ -43,6 +43,9 @@ from v5_features import FEAT_COLS, enrich_panel  # noqa: E402
 
 CONFIG_PATH = ROOT_DIR / "src" / "config.py"
 V51_CONFIG_PATH = PROC_DIR / "v51_best_config.json"
+OPTUNA_DB_PATH = PROC_DIR / "v51_optuna.db"
+OPTUNA_BEST_PATH = PROC_DIR / "v51_optuna_best.json"
+OPTUNA_TRIALS_LOG = PROC_DIR / "v51_optuna_trials.jsonl"
 TRAIN_END_TS = pd.Timestamp(TRAIN_END)
 HOLDOUT_START = TRAIN_END_TS - pd.Timedelta(days=27)
 VAL_START_TS = TRAIN_END_TS - pd.Timedelta(days=VAL_DAYS - 1)
@@ -280,6 +283,35 @@ def train_lgbm(fp: pd.DataFrame, params: dict, num_boost_round: int = 3000) -> l
     )
 
 
+def _save_optuna_trial(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
+    """Persist each finished trial; update best hyperparams file."""
+    record = {
+        "number": trial.number,
+        "value": trial.value,
+        "params": trial.params,
+        "state": str(trial.state),
+        "datetime_start": str(trial.datetime_start),
+        "datetime_complete": str(trial.datetime_complete),
+    }
+    OPTUNA_TRIALS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(OPTUNA_TRIALS_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+    if trial.value is not None and study.best_trial.number == trial.number:
+        best_params = {**DEFAULT_LGBM, **study.best_params}
+        payload = {
+            "best_value": study.best_value,
+            "best_trial": study.best_trial.number,
+            "lgbm_params": best_params,
+            "n_trials_complete": len([t for t in study.trials if t.value is not None]),
+        }
+        OPTUNA_BEST_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(
+            f"  [optuna] saved best trial #{trial.number} WRMSSE={trial.value:.6f} → {OPTUNA_BEST_PATH.name}",
+            flush=True,
+        )
+
+
 def run_optuna(
     fp: pd.DataFrame,
     sub_skus: list,
@@ -289,8 +321,15 @@ def run_optuna(
     dow_naive: np.ndarray,
     sku_p90: np.ndarray,
     n_trials: int,
+    fresh: bool = False,
 ) -> tuple[lgb.Booster, dict]:
     """Optuna on LGBM; each trial scored with default-ish postprocess."""
+
+    if fresh:
+        for p in (OPTUNA_DB_PATH, OPTUNA_BEST_PATH, OPTUNA_TRIALS_LOG):
+            if p.exists():
+                p.unlink()
+                print(f"  Removed {p.name}", flush=True)
 
     def objective(trial: optuna.Trial) -> float:
         params = {
@@ -325,13 +364,40 @@ def run_optuna(
             1.5,
         )
 
+    PROC_DIR.mkdir(parents=True, exist_ok=True)
+    storage = f"sqlite:///{OPTUNA_DB_PATH.resolve()}"
     study = optuna.create_study(
+        study_name="v51_lgbm",
+        storage=storage,
+        load_if_exists=not fresh,
         direction="minimize",
         sampler=optuna.samplers.TPESampler(seed=42),
     )
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+    if len(study.trials) > 0 and study.best_value is not None:
+        print(
+            f"  Resuming study ({len(study.trials)} trials), best so far: {study.best_value:.6f}",
+            flush=True,
+        )
+
+    study.optimize(
+        objective,
+        n_trials=n_trials,
+        show_progress_bar=True,
+        callbacks=[_save_optuna_trial],
+    )
     best_params = {**DEFAULT_LGBM, **study.best_params}
-    print(f"\nOptuna best holdout WRMSSE: {study.best_value:.6f}")
+    summary = {
+        "best_value": study.best_value,
+        "best_trial": study.best_trial.number,
+        "lgbm_params": best_params,
+        "n_trials": len(study.trials),
+        "storage": str(OPTUNA_DB_PATH),
+    }
+    OPTUNA_BEST_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"\nOptuna best holdout WRMSSE: {study.best_value:.6f}", flush=True)
+    print(f"  Saved hyperparams → {OPTUNA_BEST_PATH}", flush=True)
+    print(f"  Trial log → {OPTUNA_TRIALS_LOG}", flush=True)
+    print(f"  SQLite study → {OPTUNA_DB_PATH}", flush=True)
     model = train_lgbm(fp, best_params, num_boost_round=3000)
     return model, best_params
 
@@ -487,6 +553,11 @@ def main() -> None:
         help="Keep existing lgbm_v51.txt after post-process tune",
     )
     parser.add_argument("--postprocess-only", action="store_true", help="Alias for --skip-optuna")
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Delete Optuna DB/log and start a new study",
+    )
     args = parser.parse_args()
     if args.postprocess_only:
         args.skip_optuna = True
@@ -542,7 +613,15 @@ def main() -> None:
     else:
         print(f"\n[1/3] Optuna LGBM ({args.optuna_trials} trials) …")
         model, lgbm_params = run_optuna(
-            fp, sub_skus, sku_weights, top_tier, tier_tail, dow_naive, sku_p90, args.optuna_trials
+            fp,
+            sub_skus,
+            sku_weights,
+            top_tier,
+            tier_tail,
+            dow_naive,
+            sku_p90,
+            args.optuna_trials,
+            fresh=args.fresh,
         )
         model.save_model(str(MODEL_DIR / "lgbm_v51_tuned.txt"))
 

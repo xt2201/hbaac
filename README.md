@@ -55,9 +55,84 @@ python scripts/audit_calendar_full.py   # classify all 1,754 days (VN/intl holid
 
 Generates `eda_output/` (gitignored): charts 01–18, `EDA_REPORT.md`, `CALENDAR_AUDIT_REPORT.md` (appendix: all 343 missing days), `calendar_all_days.csv`.
 
-**V6 postmortem:** see `docs/V6_ISSUE_TRACE.md` — `submission_v6.csv` was miscalibrated; prefer V5 for Kaggle until fixed.
+**V6 postmortem:** see `docs/V6_ISSUE_TRACE.md` — `submission_v6.csv` was miscalibrated; **use V5.1 for Kaggle**, not V6.
 
-### 4. V6 pipeline — recommended order
+### 4. V5.1 pipeline — recommended (Kaggle)
+
+Expanded Vietnam calendar (`ALL_HOLIDAYS` ~161 dates), same post-process as V5 (top-50 bias, tail shrink, Sunday hard-zero).
+
+#### Quick run (no Optuna — ~10 min after panel exists)
+
+```bash
+source .venv/bin/activate
+
+python src/preprocessor.py
+python src/feature_builder.py
+python src/forecaster.py --tag v51
+```
+
+Output: `submissions/submission_v51.csv`, `models/lgbm_v51.txt`
+
+#### Full tune from scratch (Optuna + post-process — ~3–4 hours)
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt   # includes optuna
+
+# All steps: preprocess → features → 35 Optuna trials → post-process grid → forecast
+python scripts/pipeline_v51_full.py
+```
+
+Or step by step:
+
+```bash
+python src/preprocessor.py
+python src/feature_builder.py
+python scripts/tune_v51.py --optuna-trials 35 --fresh
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--fresh` | Delete Optuna DB/log and start a new study |
+| `--skip-optuna` | Use existing `models/lgbm_v51.txt`, only tune post-process (~25 min) |
+| `--skip-retrain` | Keep LGBM after post-process tune; still runs forecast unless `--skip-forecast` |
+| `--optuna-trials N` | Number of Optuna trials (default 60) |
+
+**Optuna artifacts (saved every trial — safe to stop and resume):**
+
+| Path | Description |
+|------|-------------|
+| `processed/v51_optuna.db` | SQLite study (`load_if_exists` resume) |
+| `processed/v51_optuna_best.json` | Best `lgbm_params` + holdout WRMSSE |
+| `processed/v51_optuna_trials.jsonl` | One JSON line per finished trial |
+| `processed/v51_best_config.json` | Final LGBM + post-process params after full `tune_v51.py` |
+
+**Resume after interrupt** (do not pass `--fresh`):
+
+```bash
+python scripts/tune_v51.py --optuna-trials 35
+```
+
+**Forecast only** (model + config already tuned):
+
+```bash
+python src/forecaster.py --tag v51 --forecast-only
+```
+
+**Monitor progress:**
+
+```bash
+tail -f processed/v51_optuna_trials.jsonl
+cat processed/v51_optuna_best.json
+```
+
+**Submit:** `submissions/submission_v51.csv`
+
+Post-process defaults live in `src/config.py` (updated by `tune_v51.py`). Tuned LGBM hyperparams are loaded from `processed/v51_best_config.json` when training with `--tag v51`.
+
+---
+
+### 5. V6 pipeline (experimental — not for Kaggle until recalibrated)
 
 **Option A — step by step (control memory):**
 
@@ -99,7 +174,7 @@ python scripts/pipeline_v6.py --fast
 | `submissions/submission_v6.csv` | **Submit this** |
 | `submissions/submission_v6_direct_heavy.csv` | Variant (more direct blend) |
 
-### 5. If training runs out of memory (OOM)
+### 6. If V6 training runs out of memory (OOM)
 
 1. Use `--fast` everywhere (3 LGBM seeds, skip two-stage tail in `train_ensemble.py`).
 2. Run `train_aux_models.py` alone after ensemble — it filters top-200 SKUs and recent dates for direct.
@@ -111,7 +186,7 @@ python scripts/pipeline_v6.py --fast
 
 4. Holdout report printed at end: `all` / `h_le_28` / `h_gt_28`.
 
-### 6. Diagnostics
+### 7. Diagnostics
 
 ```bash
 python scripts/eda_error_decomp.py   # needs processed/*.npy from forecaster
@@ -119,9 +194,9 @@ python scripts/tune_magic.py         # V5 MAGIC tune only
 python scripts/optuna_hpo.py         # optional HPO
 ```
 
-### 7. Submit to Kaggle
+### 8. Submit to Kaggle
 
-Upload `submissions/submission_v6.csv` (or `submission_v5.csv` from V5 pipeline).
+Upload **`submissions/submission_v51.csv`** (recommended). Alternatives: `submission_v5.csv`. Do **not** submit `submission_v6.csv` until recalibrated.
 
 Reproduction form: https://forms.gle/obAgu3dTSBT1oDGJA
 
@@ -154,43 +229,34 @@ hbaac/
 │   └── v6_features.py
 ├── scripts/
 │   ├── pipeline.py
+│   ├── pipeline_v51.py
+│   ├── pipeline_v51_full.py   # preprocess + features + tune_v51
+│   ├── tune_v51.py            # Optuna LGBM + post-process (persists to processed/)
 │   ├── pipeline_v6.py
 │   ├── run_eda_v2.py
+│   ├── audit_calendar_full.py
+│   ├── audit_calendar_deep.py
 │   ├── train_ensemble.py
 │   ├── train_aux_models.py
 │   ├── eda_error_decomp.py
+│   ├── tune_magic.py
 │   └── optuna_hpo.py
 └── docs/Overview.md
 ```
 
 ---
 
-## Pipeline V5 (baseline)
+## Pipeline V5 (legacy baseline)
 
 ```bash
 python scripts/pipeline.py
-# or:
-python src/preprocessor.py
-python src/feature_builder.py
-python src/forecaster.py
 ```
 
-Upload `submissions/submission_v5.csv`. Holdout WRMSSE ~0.473 with top-50 bias.
+Upload `submissions/submission_v5.csv`. Holdout WRMSSE ~0.473.
 
-### V5.1 (expanded calendar — recommended after EDA)
+See **§4 V5.1** above for the recommended path (`submission_v51.csv`).
 
-```bash
-python scripts/pipeline_v51.py
-# or forecast-only if models/lgbm_v51.txt exists:
-python src/forecaster.py --tag v51 --forecast-only
-```
-
-- `ALL_HOLIDAYS` synced from `vn_calendar.build_all_holidays_feature_dates()` (~161 dates vs ~27 legacy)
-- Same LGBM + post-process as V5 (top-50 bias, tail shrink, Sunday zero)
-- Output: `submissions/submission_v51.csv`, `models/lgbm_v51.txt`
-- **Do not use V6** until recalibrated (`docs/V6_ISSUE_TRACE.md`)
-
-### V5 highlights
+### V5 / V5.1 highlights
 
 - Train from 2022 (regime shift)
 - `is_saturday` / `is_sunday`, Sunday hard-zero
