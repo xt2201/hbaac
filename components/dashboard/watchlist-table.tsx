@@ -12,18 +12,9 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, MoreHorizontal, Eye, ShoppingCart, Settings2 } from "lucide-react"
+import { ArrowUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Checkbox } from "@/components/ui/checkbox"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Table,
   TableBody,
@@ -44,7 +35,6 @@ interface WatchlistTableProps {
 export function WatchlistTable({ data }: WatchlistTableProps) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
-  const [rowSelection, setRowSelection] = useState({})
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("vi-VN", {
@@ -55,28 +45,6 @@ export function WatchlistTable({ data }: WatchlistTableProps) {
   }
 
   const columns: ColumnDef<StockAlert>[] = [
-    {
-      id: "select",
-      header: ({ table }) => (
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-    },
     {
       accessorKey: "severity",
       header: "Mức độ",
@@ -209,40 +177,6 @@ export function WatchlistTable({ data }: WatchlistTableProps) {
       ),
       cell: ({ row }) => formatCurrency(row.getValue("estimatedImpact")),
     },
-    {
-      id: "actions",
-      enableHiding: false,
-      cell: ({ row }) => {
-        const alert = row.original
-
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <span className="sr-only">Open menu</span>
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Hành động</DropdownMenuLabel>
-              <DropdownMenuItem>
-                <Eye className="mr-2 h-4 w-4" />
-                Xem chi tiết
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <ShoppingCart className="mr-2 h-4 w-4" />
-                Tạo đơn hàng
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <Settings2 className="mr-2 h-4 w-4" />
-                Điều chỉnh tồn kho
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )
-      },
-    },
   ]
 
   const table = useReactTable({
@@ -254,11 +188,9 @@ export function WatchlistTable({ data }: WatchlistTableProps) {
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    onRowSelectionChange: setRowSelection,
     state: {
       sorting,
       columnFilters,
-      rowSelection,
     },
     initialState: {
       pagination: {
@@ -279,12 +211,6 @@ export function WatchlistTable({ data }: WatchlistTableProps) {
           }
           className="max-w-sm"
         />
-        {Object.keys(rowSelection).length > 0 && (
-          <Button variant="outline">
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            Tạo đơn hàng ({Object.keys(rowSelection).length} sản phẩm)
-          </Button>
-        )}
       </div>
 
       {/* Table */}
@@ -342,8 +268,7 @@ export function WatchlistTable({ data }: WatchlistTableProps) {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {table.getFilteredSelectedRowModel().rows.length} trong{" "}
-          {table.getFilteredRowModel().rows.length} hàng được chọn.
+          {table.getFilteredRowModel().rows.length} hàng phù hợp.
         </p>
         <div className="flex items-center space-x-2">
           <Button

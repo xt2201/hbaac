@@ -11,6 +11,7 @@ import {
   replenishmentSuggestions,
   inventory,
   getForecastsByProduct,
+  getDemandDriversForProduct,
   getSalesByProduct,
   searchProducts,
   getDashboardKPIs as getLocalDashboardKPIs,
@@ -18,6 +19,7 @@ import {
   getTopSellingProducts,
   getInventoryByProduct,
   CATEGORY_LABELS,
+  DATA_LAYER_LABELS,
 } from "@/lib/project-data"
 
 function withFallback<T extends object>(result: AnalyticsBackendResult<T>, fallback: () => object) {
@@ -54,10 +56,11 @@ function localProductForecast(productIdOrSku: string, days: number) {
   }
 
   const forecasts = getForecastsByProduct(product.id, days)
+  const driverSummary = getDemandDriversForProduct(product.id, days)
   const inv = getInventoryByProduct(product.id)
   const recentSales = getSalesByProduct(product.id, 28)
   const totalForecast = forecasts.reduce((sum, f) => sum + f.forecastQty, 0)
-  const avgDaily = totalForecast / days
+  const avgDaily = totalForecast / Math.max(1, forecasts.length)
   const totalRecentSales = recentSales.reduce((sum, s) => sum + s.quantity, 0)
   const currentStock = inv?.availableQty || 0
   const daysOfStock = avgDaily > 0 ? Math.round(currentStock / avgDaily) : 999
@@ -69,12 +72,45 @@ function localProductForecast(productIdOrSku: string, days: number) {
       name: product.name,
       category: CATEGORY_LABELS[product.category],
       brand: product.brand,
+      catalogSource: "danh_muc_bo_sung",
+      sourceNote: DATA_LAYER_LABELS.catalog,
     },
     forecast: {
       days,
       totalForecastQty: Math.round(totalForecast),
       avgDailyDemand: avgDaily.toFixed(1),
       method: forecasts[0]?.method || "ml_ensemble",
+    },
+    drivers: {
+      windowStartDate: driverSummary.windowStartDate,
+      windowEndDate: driverSummary.windowEndDate,
+      averageForecastQty: driverSummary.averageForecastQty,
+      peakForecastQty: driverSummary.peakForecastQty,
+      peakForecastDate: driverSummary.peakForecastDate,
+      spikeThresholdQty: driverSummary.spikeThresholdQty,
+      driverCounts: driverSummary.driverCounts,
+      notableDates: driverSummary.drivers
+        .filter((driver) => driver.type !== "weekend" || driver.alignsWithSpike)
+        .slice(0, 10)
+        .map((driver) => ({
+          date: driver.date,
+          label: driver.label,
+          type: driver.type,
+          source: driver.source,
+          forecastQty: driver.forecastQty,
+          liftVsAveragePct: driver.liftVsAveragePct,
+          alignsWithSpike: driver.alignsWithSpike,
+          sourceNote: driver.sourceNote,
+        })),
+      spikeAlignedDates: driverSummary.spikeAlignedDrivers.slice(0, 5).map((driver) => ({
+        date: driver.date,
+        label: driver.label,
+        type: driver.type,
+        source: driver.source,
+        forecastQty: driver.forecastQty,
+        liftVsAveragePct: driver.liftVsAveragePct,
+        sourceNote: driver.sourceNote,
+      })),
     },
     inventory: {
       currentStock,
@@ -86,6 +122,7 @@ function localProductForecast(productIdOrSku: string, days: number) {
       last28Days: totalRecentSales,
       avgDaily: (totalRecentSales / 28).toFixed(1),
     },
+    dataLineage: DATA_LAYER_LABELS,
   }
 }
 
@@ -118,7 +155,7 @@ function localStockAlerts(type: string, severity: string, category: string | und
       productSku: a.productSku,
       productName: a.productName,
       category: CATEGORY_LABELS[a.category],
-      type: a.type === "stockout_risk" ? "Nguy cơ hết hàng" : a.type === "overstock" ? "Tồn kho quá mức" : "Hàng bán chậm",
+      type: a.type === "stockout_risk" ? "Rủi ro thiếu hàng" : a.type === "overstock" ? "Tồn kho dư" : "Hàng bán chậm",
       severity: a.severity === "critical" ? "Nghiêm trọng" : a.severity === "warning" ? "Cảnh báo" : "Thông tin",
       currentStock: a.currentStock,
       projectedDays: a.projectedDays,
@@ -327,11 +364,11 @@ export const getStockAlertsTool = tool({
 })
 
 export const getReplenishmentSuggestionsTool = tool({
-  description: "Lấy đề xuất bổ sung hàng. Sử dụng khi người dùng hỏi về đề xuất đặt hàng, nên mua gì, hoặc cần bổ sung sản phẩm nào.",
+  description: "Lấy khuyến nghị đặt hàng. Sử dụng khi người dùng hỏi về khuyến nghị đặt hàng, nên mua gì, hoặc cần bổ sung sản phẩm nào.",
   inputSchema: z.object({
     priority: z.enum(["urgent", "high", "medium", "low", "all"]).default("all").describe("Mức độ ưu tiên của đề xuất"),
     category: z.string().optional().describe("Danh mục sản phẩm"),
-    limit: z.number().default(10).describe("Số lượng đề xuất tối đa"),
+    limit: z.number().default(10).describe("Số lượng khuyến nghị tối đa"),
   }),
   execute: async ({ priority, category, limit }) => withFallback(
     await analyticsBackendClient.getReplenishmentSuggestions({ priority, category, limit }),

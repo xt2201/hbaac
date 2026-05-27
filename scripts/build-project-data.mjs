@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const trainPath = path.join(rootDir, "train.csv")
 const forecastPath = path.join(rootDir, "submission_nbeats.csv")
+const calendarPath = path.join(rootDir, "data", "external_calendar.csv")
 const outputDir = path.join(rootDir, "lib", "project-data", "generated")
 
 const TOP_SERIES_SKUS = 1200
@@ -68,9 +69,29 @@ function daysBetween(startIso, endIso) {
   return Math.round((toUtcDate(endIso).getTime() - toUtcDate(startIso).getTime()) / MS_PER_DAY)
 }
 
+function eachDate(startIso, endIso) {
+  const dates = []
+  for (let offset = 0; offset <= daysBetween(startIso, endIso); offset += 1) {
+    dates.push(addDays(startIso, offset))
+  }
+  return dates
+}
+
 function round(value, decimals = 2) {
   const factor = 10 ** decimals
   return Math.round((value + Number.EPSILON) * factor) / factor
+}
+
+function headerIndexes(headerRow) {
+  return new Map(headerRow.map((field, index) => [field, index]))
+}
+
+function requireColumn(indexes, columnName, filePath) {
+  const index = indexes.get(columnName)
+  if (index == null) {
+    throw new Error(`Missing column ${columnName} in ${path.relative(rootDir, filePath)}`)
+  }
+  return index
 }
 
 function getSummary(summaryBySku, sku) {
@@ -188,6 +209,68 @@ function loadForecastData() {
   }
 }
 
+function loadCalendarData(expectedStartDate, expectedEndDate) {
+  const lines = readLines(calendarPath)
+  const indexes = headerIndexes(parseCsvLine(lines[0]))
+  const columns = {
+    date: requireColumn(indexes, "date", calendarPath),
+    isWeekend: requireColumn(indexes, "is_weekend", calendarPath),
+    dayOfWeek: requireColumn(indexes, "day_of_week", calendarPath),
+    isMonthStart: requireColumn(indexes, "is_month_start", calendarPath),
+    isMonthEnd: requireColumn(indexes, "is_month_end", calendarPath),
+    isPublicHoliday: requireColumn(indexes, "is_public_holiday", calendarPath),
+    holidayName: requireColumn(indexes, "holiday_name", calendarPath),
+    isLunarEvent: requireColumn(indexes, "is_lunar_event", calendarPath),
+    lunarEventName: requireColumn(indexes, "lunar_event_name", calendarPath),
+    isRetailEvent: requireColumn(indexes, "is_retail_event", calendarPath),
+    retailEventName: requireColumn(indexes, "retail_event_name", calendarPath),
+    sourceNote: requireColumn(indexes, "source_note", calendarPath),
+  }
+
+  const calendarByDate = new Map()
+  let minDate = "9999-99-99"
+  let maxDate = "0000-00-00"
+
+  for (let index = 1; index < lines.length; index += 1) {
+    const row = parseCsvLine(lines[index])
+    const date = row[columns.date]
+    if (!date) continue
+
+    const entry = {
+      date,
+      isWeekend: parseNumber(row[columns.isWeekend]) === 1,
+      dayOfWeek: parseNumber(row[columns.dayOfWeek]),
+      isMonthStart: parseNumber(row[columns.isMonthStart]) === 1,
+      isMonthEnd: parseNumber(row[columns.isMonthEnd]) === 1,
+      isPublicHoliday: parseNumber(row[columns.isPublicHoliday]) === 1,
+      holidayName: row[columns.holidayName] ?? "",
+      isLunarEvent: parseNumber(row[columns.isLunarEvent]) === 1,
+      lunarEventName: row[columns.lunarEventName] ?? "",
+      isRetailEvent: parseNumber(row[columns.isRetailEvent]) === 1,
+      retailEventName: row[columns.retailEventName] ?? "",
+      sourceNote: row[columns.sourceNote] ?? "",
+    }
+
+    calendarByDate.set(date, entry)
+    if (date < minDate) minDate = date
+    if (date > maxDate) maxDate = date
+  }
+
+  const missingDates = eachDate(expectedStartDate, expectedEndDate).filter((date) => !calendarByDate.has(date))
+  if (missingDates.length > 0) {
+    throw new Error(
+      `${path.relative(rootDir, calendarPath)} is missing ${missingDates.length} dates from ${expectedStartDate} to ${expectedEndDate}. First missing date: ${missingDates[0]}`
+    )
+  }
+
+  return {
+    rowCount: calendarByDate.size,
+    minDate,
+    maxDate,
+    calendarByDate,
+  }
+}
+
 function sumForecast(forecast, split) {
   return forecast?.[split]?.reduce((sum, value) => sum + value, 0) ?? 0
 }
@@ -298,6 +381,65 @@ function buildDailyForecastSeries(forecastData, seriesSkus) {
   return output.sort(([left], [right]) => left.localeCompare(right))
 }
 
+function buildDailyCalendarFeatures(calendarData, startDate, endDate) {
+  return eachDate(startDate, endDate).map((date) => {
+    const entry = calendarData.calendarByDate.get(date)
+    if (!entry) {
+      throw new Error(`Missing calendar feature for ${date}`)
+    }
+
+    return [
+      entry.date,
+      entry.isWeekend ? 1 : 0,
+      entry.dayOfWeek,
+      entry.isMonthStart ? 1 : 0,
+      entry.isMonthEnd ? 1 : 0,
+      entry.isPublicHoliday ? 1 : 0,
+      entry.holidayName,
+      entry.isLunarEvent ? 1 : 0,
+      entry.lunarEventName,
+      entry.isRetailEvent ? 1 : 0,
+      entry.retailEventName,
+      entry.sourceNote,
+    ]
+  })
+}
+
+function buildCalendarSummary(calendarData, startDate, endDate) {
+  const features = buildDailyCalendarFeatures(calendarData, startDate, endDate)
+
+  return {
+    rowCount: features.length,
+    minDate: startDate,
+    maxDate: endDate,
+    weekendDays: features.filter((entry) => entry[1] === 1).length,
+    monthBoundaryDays: features.filter((entry) => entry[3] === 1 || entry[4] === 1).length,
+    publicHolidayDays: features.filter((entry) => entry[5] === 1).length,
+    lunarEventDays: features.filter((entry) => entry[7] === 1).length,
+    retailEventDays: features.filter((entry) => entry[9] === 1).length,
+    sourceNotes: [
+      "Đặc trưng lịch suy ra từ ngày",
+      "Ghi chú nguồn ngày lễ Việt Nam: lịch chính thức/Vietnam Briefing",
+      "Ghi chú nguồn sự kiện âm lịch",
+      "Giả định lịch bán lẻ",
+    ],
+    dailyCalendarFeatureFields: [
+      "date",
+      "isWeekend",
+      "dayOfWeek",
+      "isMonthStart",
+      "isMonthEnd",
+      "isPublicHoliday",
+      "holidayName",
+      "isLunarEvent",
+      "lunarEventName",
+      "isRetailEvent",
+      "retailEventName",
+      "sourceNote",
+    ],
+  }
+}
+
 function writeJson(fileName, value) {
   fs.writeFileSync(path.join(outputDir, fileName), `${JSON.stringify(value)}\n`, "utf8")
 }
@@ -309,11 +451,16 @@ function main() {
   if (!fs.existsSync(forecastPath)) {
     throw new Error(`Missing ${path.relative(rootDir, forecastPath)}`)
   }
+  if (!fs.existsSync(calendarPath)) {
+    throw new Error(`Missing ${path.relative(rootDir, calendarPath)}`)
+  }
 
   fs.mkdirSync(outputDir, { recursive: true })
 
   const trainData = loadTrainData()
   const forecastData = loadForecastData()
+  const forecastEndDate = addDays(trainData.maxDate, FORECAST_DAYS_PER_SPLIT * 2)
+  const calendarData = loadCalendarData(trainData.minDate, forecastEndDate)
   const productSummaries = buildProductSummaries(trainData, forecastData)
   const seriesSkus = selectSeriesSkus(productSummaries)
 
@@ -322,6 +469,9 @@ function main() {
     trainSkuCount: trainData.skuCount,
     forecastRows: forecastData.rowCount,
     forecastSkuCount: forecastData.skuCount,
+    calendarRows: calendarData.rowCount,
+    calendarStartDate: calendarData.minDate,
+    calendarEndDate: calendarData.maxDate,
     minTrainDate: trainData.minDate,
     maxTrainDate: trainData.maxDate,
     validationStartDate: addDays(trainData.maxDate, 1),
@@ -352,13 +502,29 @@ function main() {
     ],
     dailySalesSeriesFields: ["sku", ["date", "quantity", "revenue"]],
     dailyForecastSeriesFields: ["sku", "validationF1ToF28", "evaluationF1ToF28"],
+    dailyCalendarFeatureFields: [
+      "date",
+      "isWeekend",
+      "dayOfWeek",
+      "isMonthStart",
+      "isMonthEnd",
+      "isPublicHoliday",
+      "holidayName",
+      "isLunarEvent",
+      "lunarEventName",
+      "isRetailEvent",
+      "retailEventName",
+      "sourceNote",
+    ],
     seriesSkuCount: seriesSkus.size,
   })
   writeJson("product-summaries.json", productSummaries)
   writeJson("daily-sales-series.json", buildDailySalesSeries(trainData, seriesSkus))
   writeJson("daily-forecast-series.json", buildDailyForecastSeries(forecastData, seriesSkus))
+  writeJson("daily-calendar-features.json", buildDailyCalendarFeatures(calendarData, trainData.minDate, forecastEndDate))
+  writeJson("calendar-summary.json", buildCalendarSummary(calendarData, trainData.minDate, forecastEndDate))
 
-  console.log(`Generated ${productSummaries.length} SKU summaries and ${seriesSkus.size} SKU series.`)
+  console.log(`Generated ${productSummaries.length} SKU summaries, ${seriesSkus.size} SKU series, and ${calendarData.rowCount} calendar rows.`)
 }
 
 main()

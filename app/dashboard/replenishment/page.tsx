@@ -6,7 +6,6 @@ import { ReplenishmentCards } from "@/components/dashboard/replenishment-cards"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
   SelectContent,
@@ -22,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { CheckCircle2, FileText, Package, ShoppingCart, Truck, AlertTriangle } from "lucide-react"
+import { CheckCircle2, Package, ShoppingCart, Truck } from "lucide-react"
 import { replenishmentSuggestions, CATEGORIES, CATEGORY_LABELS, suppliers } from "@/lib/project-data"
 import type { ProductCategory, ReplenishmentSuggestion } from "@/types"
 
@@ -101,8 +100,8 @@ export default function ReplenishmentPage() {
   return (
     <div className="flex flex-col">
       <Header
-        title="Đề xuất đặt hàng"
-        description="Gợi ý bổ sung hàng dựa trên dự báo nhu cầu và mức tồn kho"
+        title="Khuyến nghị đặt hàng"
+        description="Ưu tiên bổ sung hàng dựa trên dự báo nhu cầu, rủi ro thiếu hàng và tác động lợi nhuận"
       />
 
       <div className="flex-1 space-y-6 p-6">
@@ -110,7 +109,7 @@ export default function ReplenishmentPage() {
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Đề xuất chờ xử lý</CardTitle>
+              <CardTitle className="text-sm font-medium">Khuyến nghị chờ xử lý</CardTitle>
               <Package className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -173,9 +172,9 @@ export default function ReplenishmentPage() {
           <CardHeader>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <CardTitle>Danh sách đề xuất</CardTitle>
+                <CardTitle>Danh sách khuyến nghị đặt hàng</CardTitle>
                 <CardDescription>
-                  {filteredSuggestions.length} đề xuất đang chờ xử lý
+                  {filteredSuggestions.length} khuyến nghị đang chờ xử lý
                 </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -239,10 +238,10 @@ export default function ReplenishmentPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-              Đã tạo đơn hàng
+              Đã duyệt khuyến nghị
             </DialogTitle>
             <DialogDescription>
-              Đơn hàng đã được tạo và gửi đến nhà cung cấp.
+              Khuyến nghị đặt hàng đã được ghi nhận trong phiên làm việc demo.
             </DialogDescription>
           </DialogHeader>
           {lastApproved && (
@@ -268,12 +267,8 @@ export default function ReplenishmentPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSuccessDialog(false)}>
-              Đóng
-            </Button>
             <Button onClick={() => setShowSuccessDialog(false)}>
-              <FileText className="mr-2 h-4 w-4" />
-              Xem đơn hàng
+              Đóng
             </Button>
           </DialogFooter>
         </DialogContent>

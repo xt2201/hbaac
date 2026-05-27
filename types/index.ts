@@ -97,6 +97,34 @@ export interface ReplenishmentSuggestion {
   reorderPoint: number
 }
 
+export type DecisionActionType = "order" | "reduce" | "clearance" | "watch"
+
+export type DecisionPriority = "urgent" | "high" | "medium" | "low"
+
+export interface DecisionQueueItem {
+  id: string
+  productId: string
+  productName: string
+  productSku: string
+  category: ProductCategory
+  supplierId: string
+  supplierName: string
+  actionType: DecisionActionType
+  priority: DecisionPriority
+  urgency: string
+  deadline: Date
+  estimatedFinancialImpact: number
+  reason: string
+  recommendation: string
+  confidence: number
+  dataSource: string
+  assumptions: string[]
+  currentStock: number
+  projectedDays: number
+  suggestedQty?: number
+  estimatedCost?: number
+}
+
 export interface PurchaseOrder {
   id: string
   supplierId: string

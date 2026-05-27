@@ -4,8 +4,11 @@ import datasetInfoJson from "./generated/dataset-info.json"
 import productSummariesJson from "./generated/product-summaries.json"
 import dailySalesSeriesJson from "./generated/daily-sales-series.json"
 import dailyForecastSeriesJson from "./generated/daily-forecast-series.json"
+import calendarSummaryJson from "./generated/calendar-summary.json"
+import dailyCalendarFeaturesJson from "./generated/daily-calendar-features.json"
 import type {
   DashboardKPIs,
+  DecisionQueueItem,
   DemandForecast,
   ForecastChartData,
   InventoryLevel,
@@ -22,6 +25,9 @@ type DatasetInfo = {
   trainSkuCount: number
   forecastRows: number
   forecastSkuCount: number
+  calendarRows: number
+  calendarStartDate: string
+  calendarEndDate: string
   minTrainDate: string
   maxTrainDate: string
   validationStartDate: string
@@ -57,16 +63,94 @@ type ProductSummaryTuple = [
 type DailySalesPointTuple = [date: string, quantity: number, revenue: number]
 type DailySalesSeriesTuple = [sku: string, points: DailySalesPointTuple[]]
 type DailyForecastSeriesTuple = [sku: string, validation: number[], evaluation: number[]]
+type DailyCalendarFeatureTuple = [
+  date: string,
+  isWeekend: number,
+  dayOfWeek: number,
+  isMonthStart: number,
+  isMonthEnd: number,
+  isPublicHoliday: number,
+  holidayName: string,
+  isLunarEvent: number,
+  lunarEventName: string,
+  isRetailEvent: number,
+  retailEventName: string,
+  sourceNote: string,
+]
+
+type CalendarSummary = {
+  rowCount: number
+  minDate: string
+  maxDate: string
+  weekendDays: number
+  monthBoundaryDays: number
+  publicHolidayDays: number
+  lunarEventDays: number
+  retailEventDays: number
+  sourceNotes: string[]
+}
+
+export type CalendarFeature = {
+  date: string
+  isWeekend: boolean
+  dayOfWeek: number
+  isMonthStart: boolean
+  isMonthEnd: boolean
+  isPublicHoliday: boolean
+  holidayName: string
+  isLunarEvent: boolean
+  lunarEventName: string
+  isRetailEvent: boolean
+  retailEventName: string
+  sourceNote: string
+}
+
+export type ForecastDriverSource = "date-derived" | "factual_external_calendar" | "assumption"
+export type ForecastDriverType = "weekend" | "month_boundary" | "public_holiday" | "lunar_event" | "retail_event"
+
+export type ForecastDriver = {
+  date: string
+  label: string
+  type: ForecastDriverType
+  source: ForecastDriverSource
+  sourceNote: string
+  forecastQty: number
+  liftVsAveragePct: number
+  alignsWithSpike: boolean
+}
+
+export type ForecastDriverSummary = {
+  windowStartDate: string
+  windowEndDate: string
+  days: number
+  averageForecastQty: number
+  peakForecastQty: number
+  peakForecastDate: string
+  spikeThresholdQty: number
+  driverCounts: Record<ForecastDriverType, number>
+  drivers: ForecastDriver[]
+  spikeAlignedDrivers: ForecastDriver[]
+  sourceLabels: typeof DATA_LAYER_LABELS
+}
 
 const DATASET_INFO = datasetInfoJson as DatasetInfo
 const PRODUCT_SUMMARIES = productSummariesJson as ProductSummaryTuple[]
 const DAILY_SALES_SERIES = dailySalesSeriesJson as DailySalesSeriesTuple[]
 const DAILY_FORECAST_SERIES = dailyForecastSeriesJson as DailyForecastSeriesTuple[]
+const CALENDAR_SUMMARY = calendarSummaryJson as CalendarSummary
+const DAILY_CALENDAR_FEATURES = dailyCalendarFeaturesJson as DailyCalendarFeatureTuple[]
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const DEFAULT_PRICE = 100_000
 
 export const HBAAC_DATASET_INFO = DATASET_INFO
+export const HBAAC_CALENDAR_SUMMARY = CALENDAR_SUMMARY
+
+export const DATA_LAYER_LABELS = {
+  competition: "Dữ liệu cuộc thi thực: bán hàng, giá, chi phí trong train.csv và dự báo trong submission_nbeats.csv.",
+  calendar: "Dữ liệu lịch ngoài hoặc đặc trưng suy ra từ ngày trong data/external_calendar.csv.",
+  catalog: "Danh mục bổ sung/metadata suy luận: tên sản phẩm, ngành hàng, thương hiệu, nhà cung cấp, tồn kho và điểm đặt hàng là dữ liệu làm giàu cho demo.",
+} as const
 
 export const CATEGORIES: ProductCategory[] = [
   "Brake",
@@ -80,25 +164,25 @@ export const CATEGORIES: ProductCategory[] = [
 ]
 
 export const CATEGORY_LABELS: Record<ProductCategory, string> = {
-  Brake: "He thong phanh",
-  Engine: "Dong co",
-  Suspension: "He thong treo",
-  Electrical: "Dien va dien tu",
-  Cooling: "He thong lam mat",
-  Transmission: "Hop so",
-  Tires: "Lop va mam xe",
-  Body: "Than vo xe",
+  Brake: "Hệ thống phanh",
+  Engine: "Động cơ",
+  Suspension: "Hệ thống treo",
+  Electrical: "Điện và điện tử",
+  Cooling: "Hệ thống làm mát",
+  Transmission: "Hộp số",
+  Tires: "Lốp và mâm xe",
+  Body: "Thân vỏ xe",
 }
 
 const SUBCATEGORIES: Record<ProductCategory, string[]> = {
-  Brake: ["Ma phanh", "Dia phanh", "Bo thang", "Tong phanh", "Dau phanh"],
-  Engine: ["Loc dau", "Loc gio", "Bugi", "Day curoa", "Bom dau"],
-  Suspension: ["Giam xoc", "Lo xo", "Thanh can bang", "Rotuyn", "Cao su chan may"],
-  Electrical: ["Ac quy", "May phat dien", "Den pha", "Den hau", "Cam bien"],
-  Cooling: ["Ket nuoc", "Bom nuoc", "Quat lam mat", "Ong nuoc", "Van hang nhiet"],
-  Transmission: ["Bo ly hop", "Dau hop so", "Vong bi", "Khop cac dang", "Phot"],
-  Tires: ["Lop xe", "Mam xe", "Van lop", "Can mam", "Lop du phong"],
-  Body: ["Guong chieu hau", "Can truoc", "Can sau", "Den xi nhan", "Cop xe"],
+  Brake: ["Má phanh", "Đĩa phanh", "Bộ thắng", "Tổng phanh", "Dầu phanh"],
+  Engine: ["Lọc dầu", "Lọc gió", "Bugi", "Dây curoa", "Bơm dầu"],
+  Suspension: ["Giảm xóc", "Lò xo", "Thanh cân bằng", "Rotuyn", "Cao su chân máy"],
+  Electrical: ["Ắc quy", "Máy phát điện", "Đèn pha", "Đèn hậu", "Cảm biến"],
+  Cooling: ["Két nước", "Bơm nước", "Quạt làm mát", "Ống nước", "Van hằng nhiệt"],
+  Transmission: ["Bộ ly hợp", "Dầu hộp số", "Vòng bi", "Khớp các đăng", "Phớt"],
+  Tires: ["Lốp xe", "Mâm xe", "Van lốp", "Cân mâm", "Lốp dự phòng"],
+  Body: ["Gương chiếu hậu", "Cản trước", "Cản sau", "Đèn xi nhan", "Cốp xe"],
 }
 
 const BRANDS = ["Toyota", "Honda", "Hyundai", "Kia", "Mazda", "Ford", "Mitsubishi", "Suzuki", "VinFast", "Bosch"]
@@ -131,6 +215,24 @@ export const suppliers: Supplier[] = [
 const summaryBySku = new Map(PRODUCT_SUMMARIES.map((summary) => [summary[0], summary]))
 const dailySalesBySku = new Map(DAILY_SALES_SERIES)
 const dailyForecastBySku = new Map(DAILY_FORECAST_SERIES.map(([sku, validation, evaluation]) => [sku, [...validation, ...evaluation]]))
+const calendarByDate = new Map(DAILY_CALENDAR_FEATURES.map((feature) => [feature[0], calendarFeatureFromTuple(feature)]))
+
+function calendarFeatureFromTuple(feature: DailyCalendarFeatureTuple): CalendarFeature {
+  return {
+    date: feature[0],
+    isWeekend: feature[1] === 1,
+    dayOfWeek: feature[2],
+    isMonthStart: feature[3] === 1,
+    isMonthEnd: feature[4] === 1,
+    isPublicHoliday: feature[5] === 1,
+    holidayName: feature[6],
+    isLunarEvent: feature[7] === 1,
+    lunarEventName: feature[8],
+    isRetailEvent: feature[9] === 1,
+    retailEventName: feature[10],
+    sourceNote: feature[11],
+  }
+}
 
 function toDate(isoDate: string) {
   return new Date(`${isoDate}T00:00:00Z`)
@@ -365,7 +467,7 @@ function generateStockAlerts(): StockAlert[] {
         severity: alertSeverity(daysOfStock),
         currentStock: inv.availableQty,
         projectedDays: daysOfStock,
-        recommendation: `Dat bo sung toi thieu ${Math.max(product.minOrderQty, inv.reorderPoint - inv.availableQty)} don vi theo forecast N-BEATS`,
+        recommendation: `Đặt bổ sung tối thiểu ${Math.max(product.minOrderQty, inv.reorderPoint - inv.availableQty)} đơn vị theo forecast N-BEATS`,
         estimatedImpact: Math.round(summary[17] * product.unitPrice),
         createdAt: toDate(DATASET_INFO.maxTrainDate),
       })
@@ -382,7 +484,7 @@ function generateStockAlerts(): StockAlert[] {
         severity: inv.availableQty > inv.reorderPoint * 5 ? "warning" : "info",
         currentStock: inv.availableQty,
         projectedDays: daysOfStock,
-        recommendation: "Xem lai ton kho muc tieu so voi forecast 56 ngay",
+        recommendation: "Xem lại tồn kho mục tiêu so với forecast 56 ngày",
         estimatedImpact: Math.round(product.unitCost * inv.availableQty * 0.1),
         createdAt: toDate(DATASET_INFO.maxTrainDate),
       })
@@ -399,7 +501,7 @@ function generateStockAlerts(): StockAlert[] {
         severity: "info",
         currentStock: inv.availableQty,
         projectedDays: daysOfStock,
-        recommendation: "SKU ban cham trong 90 ngay gan nhat, can xem lai chinh sach ton kho",
+        recommendation: "SKU bán chậm trong 90 ngày gần nhất, cần xem lại chính sách tồn kho",
         estimatedImpact: Math.round(product.unitCost * inv.availableQty * 0.05),
         createdAt: toDate(DATASET_INFO.maxTrainDate),
       })
@@ -445,6 +547,400 @@ function generateReplenishmentSuggestions(): ReplenishmentSuggestion[] {
 }
 
 export const replenishmentSuggestions: ReplenishmentSuggestion[] = generateReplenishmentSuggestions()
+
+const decisionPriorityRank: Record<DecisionQueueItem["priority"], number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+}
+
+const decisionDataSource = `${DATA_LAYER_LABELS.competition} ${DATA_LAYER_LABELS.catalog}`
+const decisionAssumptions = [
+  DATA_LAYER_LABELS.catalog,
+  "Deadline, confidence và tác động tài chính là ước tính vận hành để ưu tiên demo workflow.",
+]
+
+function addCalendarDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * MS_PER_DAY)
+}
+
+function confidenceFromPriority(priority: DecisionQueueItem["priority"], hasForecast: boolean) {
+  const base = priority === "urgent" ? 92 : priority === "high" ? 86 : priority === "medium" ? 76 : 66
+  return hasForecast ? base : Math.max(55, base - 10)
+}
+
+function priorityFromAlert(alert: StockAlert): DecisionQueueItem["priority"] {
+  if (alert.severity === "critical") return "urgent"
+  if (alert.severity === "warning") return "high"
+  return "medium"
+}
+
+function generateDecisionQueueItems(): DecisionQueueItem[] {
+  const relatedStockoutImpact = new Map(
+    stockAlerts
+      .filter((alert) => alert.type === "stockout_risk")
+      .map((alert) => [alert.productId, alert.estimatedImpact])
+  )
+
+  const orderItems: DecisionQueueItem[] = replenishmentSuggestions.map((suggestion) => {
+    const forecast = getForecastsByProduct(suggestion.productId, 28)
+    return {
+      id: `decision_order_${suggestion.productSku}`,
+      productId: suggestion.productId,
+      productName: suggestion.productName,
+      productSku: suggestion.productSku,
+      category: suggestion.category,
+      supplierId: suggestion.supplierId,
+      supplierName: suggestion.supplierName,
+      actionType: "order",
+      priority: suggestion.priority,
+      urgency: suggestion.priority === "urgent" ? "Cần duyệt trong 24 giờ" : suggestion.priority === "high" ? "Cần xử lý trong tuần này" : "Theo dõi trong chu kỳ đặt hàng kế tiếp",
+      deadline: addCalendarDays(suggestion.expectedDeliveryDate, -Math.max(1, Math.round((suppliers.find((supplier) => supplier.id === suggestion.supplierId)?.leadTimeDays ?? 7) / 2))),
+      estimatedFinancialImpact: relatedStockoutImpact.get(suggestion.productId) ?? suggestion.estimatedCost,
+      reason: suggestion.reason,
+      recommendation: `Đặt ${suggestion.suggestedQty.toLocaleString("vi-VN")} đơn vị để giảm rủi ro thiếu hàng`,
+      confidence: confidenceFromPriority(suggestion.priority, forecast.length > 0),
+      dataSource: decisionDataSource,
+      assumptions: decisionAssumptions,
+      currentStock: suggestion.currentStock,
+      projectedDays: Math.max(1, Math.round((suggestion.currentStock / Math.max(1, getAverageDailySales(suggestion.productId))) || 1)),
+      suggestedQty: suggestion.suggestedQty,
+      estimatedCost: suggestion.estimatedCost,
+    }
+  })
+
+  const alertItems: DecisionQueueItem[] = stockAlerts
+    .filter((alert) => alert.type !== "stockout_risk")
+    .map((alert) => {
+      const product = productById.get(alert.productId)
+      const supplier = product ? suppliers.find((item) => item.id === product.supplierId) ?? suppliers[0] : suppliers[0]
+      const actionType = alert.type === "overstock" ? "reduce" : "clearance"
+      const priority = priorityFromAlert(alert)
+      const forecast = getForecastsByProduct(alert.productId, 28)
+
+      return {
+        id: `decision_${actionType}_${alert.productSku}`,
+        productId: alert.productId,
+        productName: alert.productName,
+        productSku: alert.productSku,
+        category: alert.category,
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        actionType,
+        priority,
+        urgency: actionType === "reduce" ? "Giảm mua trong kỳ đặt hàng kế tiếp" : "Xem xét xả hàng trong 30 ngày",
+        deadline: addCalendarDays(alert.createdAt, actionType === "reduce" ? 14 : 30),
+        estimatedFinancialImpact: alert.estimatedImpact,
+        reason: alert.recommendation,
+        recommendation: actionType === "reduce" ? "Tạm giảm mua hoặc hạ tồn kho mục tiêu cho SKU này" : "Xả hàng có kiểm soát qua khuyến mãi hoặc bundle",
+        confidence: confidenceFromPriority(priority, forecast.length > 0),
+        dataSource: decisionDataSource,
+        assumptions: decisionAssumptions,
+        currentStock: alert.currentStock,
+        projectedDays: alert.projectedDays,
+      }
+    })
+
+  return [...orderItems, ...alertItems]
+    .sort((left, right) => right.estimatedFinancialImpact - left.estimatedFinancialImpact || decisionPriorityRank[left.priority] - decisionPriorityRank[right.priority] || left.deadline.getTime() - right.deadline.getTime())
+    .slice(0, 200)
+}
+
+export const decisionQueueItems: DecisionQueueItem[] = generateDecisionQueueItems()
+
+export function getDecisionQueueItems(): DecisionQueueItem[] {
+  return decisionQueueItems
+}
+
+export type ProfitPriority = ReplenishmentSuggestion["priority"]
+
+export type ProfitCommandKpis = {
+  lostProfitRisk: number
+  lockedCapital: number
+  estimatedHoldingCost: number
+  expectedProfitFromRecommendations: number
+  actionSkuNext7Days: number
+  proposedBudget: number
+  highPriorityBudgetShare: number
+}
+
+export type ProfitActionRow = {
+  productId: string
+  productSku: string
+  productName: string
+  categoryLabel: string
+  supplierName: string
+  issueLabel: string
+  priority: ProfitPriority
+  priorityLabel: string
+  currentStock: number
+  daysOfStock: number
+  suggestedQty: number
+  financialImpact: number
+  recommendation: string
+  sourceLabel: string
+}
+
+export type CapitalOpportunityRow = {
+  productId: string
+  productSku: string
+  productName: string
+  categoryLabel: string
+  supplierName: string
+  excessQty: number
+  currentStock: number
+  targetStock: number
+  capitalLocked: number
+  holdingCost: number
+  recommendation: string
+  sourceLabel: string
+}
+
+export type BudgetMixRow = {
+  priority: ProfitPriority
+  label: string
+  amount: number
+  share: number
+  skuCount: number
+}
+
+export type SupplierBudgetRow = {
+  supplierId: string
+  supplierName: string
+  skuCount: number
+  urgentCount: number
+  estimatedCost: number
+  expectedProfitSaved: number
+}
+
+export type CategoryBudgetRow = {
+  category: ProductCategory
+  categoryLabel: string
+  skuCount: number
+  estimatedCost: number
+  share: number
+}
+
+export type ProfitCommandCenter = {
+  kpis: ProfitCommandKpis
+  immediateActions: ProfitActionRow[]
+  capitalOpportunities: CapitalOpportunityRow[]
+  priorityBudgetMix: BudgetMixRow[]
+  supplierBudget: SupplierBudgetRow[]
+  categoryBudget: CategoryBudgetRow[]
+  sourceLabels: typeof DATA_LAYER_LABELS
+}
+
+const PROFIT_PLANNING_HORIZON_DAYS = 56
+const ANNUAL_HOLDING_COST_RATE = 0.22
+const PRIORITY_ORDER: ProfitPriority[] = ["urgent", "high", "medium", "low"]
+const PRIORITY_LABELS: Record<ProfitPriority, string> = {
+  urgent: "Khẩn cấp",
+  high: "Cao",
+  medium: "Trung bình",
+  low: "Thấp",
+}
+
+function priorityFromSeverity(severity: StockAlert["severity"]): ProfitPriority {
+  if (severity === "critical") return "urgent"
+  if (severity === "warning") return "high"
+  return "medium"
+}
+
+function grossMarginPerUnit(product: Product) {
+  return Math.max(1, product.unitPrice - product.unitCost, product.unitPrice * 0.18)
+}
+
+function getForecast56(summary: ProductSummaryTuple | undefined) {
+  return Math.max(0, summary?.[17] ?? 0)
+}
+
+function getLostProfitRisk(alert: StockAlert) {
+  const product = productById.get(alert.productId)
+  if (!product) return 0
+
+  const marginRate = grossMarginPerUnit(product) / Math.max(1, product.unitPrice)
+  return Math.round(alert.estimatedImpact * marginRate)
+}
+
+function getExpectedProfitSaved(suggestion: ReplenishmentSuggestion) {
+  const product = productById.get(suggestion.productId)
+  const summary = product ? summaryBySku.get(product.sku) : undefined
+  const inv = inventoryByProductId.get(suggestion.productId)
+  if (!product || !summary || !inv) return 0
+
+  const forecast56 = getForecast56(summary)
+  const quantityAtRisk = Math.max(0, Math.ceil(forecast56 - inv.availableQty))
+  const protectedQty = Math.min(
+    suggestion.suggestedQty,
+    Math.max(product.minOrderQty, quantityAtRisk || Math.ceil(forecast56 * 0.3))
+  )
+
+  return Math.round(protectedQty * grossMarginPerUnit(product))
+}
+
+function getCapitalOpportunity(alert: StockAlert): CapitalOpportunityRow | null {
+  const product = productById.get(alert.productId)
+  const inv = inventoryByProductId.get(alert.productId)
+  const summary = product ? summaryBySku.get(product.sku) : undefined
+  if (!product || !inv) return null
+
+  const supplier = suppliers.find((item) => item.id === product.supplierId) ?? suppliers[0]
+  const forecast56 = getForecast56(summary)
+  const targetStock = Math.ceil(Math.max(product.minOrderQty, inv.reorderPoint * 1.5, forecast56 * 1.1))
+  const excessQty = Math.max(0, inv.availableQty - targetStock)
+  const capitalLocked = Math.round(excessQty * product.unitCost)
+  if (capitalLocked <= 0) return null
+
+  return {
+    productId: product.id,
+    productSku: product.sku,
+    productName: product.name,
+    categoryLabel: CATEGORY_LABELS[product.category],
+    supplierName: supplier.name,
+    excessQty,
+    currentStock: inv.availableQty,
+    targetStock,
+    capitalLocked,
+    holdingCost: Math.round(capitalLocked * ANNUAL_HOLDING_COST_RATE * (PROFIT_PLANNING_HORIZON_DAYS / 365)),
+    recommendation: "Giảm mua mới, rà soát xả hàng hoặc chuyển tồn sang SKU/điểm bán có nhu cầu cao hơn.",
+    sourceLabel: "Danh mục bổ sung + forecast cuộc thi",
+  }
+}
+
+export function getProfitCommandCenter(): ProfitCommandCenter {
+  const stockoutAlerts = stockAlerts.filter((alert) => alert.type === "stockout_risk")
+  const overstockAlerts = stockAlerts.filter((alert) => alert.type === "overstock")
+  const suggestionByProductId = new Map(replenishmentSuggestions.map((suggestion) => [suggestion.productId, suggestion]))
+
+  const immediateActions = stockoutAlerts
+    .flatMap((alert): ProfitActionRow[] => {
+      const product = productById.get(alert.productId)
+      const inv = inventoryByProductId.get(alert.productId)
+      if (!product || !inv) return []
+
+      const suggestion = suggestionByProductId.get(product.id)
+      const supplier = suppliers.find((item) => item.id === product.supplierId) ?? suppliers[0]
+      const priority = suggestion?.priority ?? priorityFromSeverity(alert.severity)
+      const suggestedQty = suggestion?.suggestedQty ?? Math.max(product.minOrderQty, inv.reorderPoint - inv.availableQty)
+
+      return [{
+        productId: product.id,
+        productSku: product.sku,
+        productName: product.name,
+        categoryLabel: CATEGORY_LABELS[product.category],
+        supplierName: supplier.name,
+        issueLabel: "Rủi ro thiếu hàng",
+        priority,
+        priorityLabel: PRIORITY_LABELS[priority],
+        currentStock: inv.availableQty,
+        daysOfStock: alert.projectedDays,
+        suggestedQty,
+        financialImpact: getLostProfitRisk(alert),
+        recommendation: `Duyệt khuyến nghị đặt hàng ${suggestedQty} đơn vị trước khi còn dưới ${Math.max(1, Math.min(7, alert.projectedDays))} ngày tồn kho.`,
+        sourceLabel: "Dữ liệu cuộc thi + danh mục bổ sung",
+      }]
+    })
+    .sort((left, right) => right.financialImpact - left.financialImpact)
+
+  const capitalOpportunities = overstockAlerts
+    .map(getCapitalOpportunity)
+    .filter((item): item is CapitalOpportunityRow => Boolean(item))
+    .sort((left, right) => right.capitalLocked - left.capitalLocked)
+
+  const proposedBudget = replenishmentSuggestions.reduce((sum, suggestion) => sum + suggestion.estimatedCost, 0)
+  const priorityTotals = new Map<ProfitPriority, { amount: number; skuCount: number }>(
+    PRIORITY_ORDER.map((priority) => [priority, { amount: 0, skuCount: 0 }])
+  )
+  const supplierTotals = new Map<string, SupplierBudgetRow>()
+  const categoryTotals = new Map<ProductCategory, { skuCount: number; estimatedCost: number }>()
+
+  for (const suggestion of replenishmentSuggestions) {
+    const priorityTotal = priorityTotals.get(suggestion.priority)!
+    priorityTotal.amount += suggestion.estimatedCost
+    priorityTotal.skuCount += 1
+
+    const supplierTotal = supplierTotals.get(suggestion.supplierId) ?? {
+      supplierId: suggestion.supplierId,
+      supplierName: suggestion.supplierName,
+      skuCount: 0,
+      urgentCount: 0,
+      estimatedCost: 0,
+      expectedProfitSaved: 0,
+    }
+    supplierTotal.skuCount += 1
+    supplierTotal.urgentCount += suggestion.priority === "urgent" ? 1 : 0
+    supplierTotal.estimatedCost += suggestion.estimatedCost
+    supplierTotal.expectedProfitSaved += getExpectedProfitSaved(suggestion)
+    supplierTotals.set(suggestion.supplierId, supplierTotal)
+
+    const categoryTotal = categoryTotals.get(suggestion.category) ?? { skuCount: 0, estimatedCost: 0 }
+    categoryTotal.skuCount += 1
+    categoryTotal.estimatedCost += suggestion.estimatedCost
+    categoryTotals.set(suggestion.category, categoryTotal)
+  }
+
+  const priorityBudgetMix = PRIORITY_ORDER.map((priority) => {
+    const total = priorityTotals.get(priority)!
+    return {
+      priority,
+      label: PRIORITY_LABELS[priority],
+      amount: Math.round(total.amount),
+      share: proposedBudget > 0 ? Math.round((total.amount / proposedBudget) * 1000) / 10 : 0,
+      skuCount: total.skuCount,
+    }
+  })
+
+  const supplierBudget = [...supplierTotals.values()]
+    .map((row) => ({
+      ...row,
+      estimatedCost: Math.round(row.estimatedCost),
+      expectedProfitSaved: Math.round(row.expectedProfitSaved),
+    }))
+    .sort((left, right) => right.estimatedCost - left.estimatedCost)
+
+  const categoryBudget = [...categoryTotals.entries()]
+    .map(([category, total]) => ({
+      category,
+      categoryLabel: CATEGORY_LABELS[category],
+      skuCount: total.skuCount,
+      estimatedCost: Math.round(total.estimatedCost),
+      share: proposedBudget > 0 ? Math.round((total.estimatedCost / proposedBudget) * 1000) / 10 : 0,
+    }))
+    .sort((left, right) => right.estimatedCost - left.estimatedCost)
+
+  const lostProfitRisk = stockoutAlerts.reduce((sum, alert) => sum + getLostProfitRisk(alert), 0)
+  const lockedCapital = capitalOpportunities.reduce((sum, item) => sum + item.capitalLocked, 0)
+  const estimatedHoldingCost = capitalOpportunities.reduce((sum, item) => sum + item.holdingCost, 0)
+  const expectedProfitFromRecommendations = replenishmentSuggestions.reduce((sum, suggestion) => sum + getExpectedProfitSaved(suggestion), 0)
+  const actionSkuNext7Days = new Set(
+    stockoutAlerts
+      .filter((alert) => alert.projectedDays <= 7 || alert.severity === "critical")
+      .map((alert) => alert.productId)
+  ).size
+  const highPriorityBudget = priorityBudgetMix
+    .filter((row) => row.priority === "urgent" || row.priority === "high")
+    .reduce((sum, row) => sum + row.amount, 0)
+
+  return {
+    kpis: {
+      lostProfitRisk: Math.round(lostProfitRisk),
+      lockedCapital: Math.round(lockedCapital),
+      estimatedHoldingCost: Math.round(estimatedHoldingCost),
+      expectedProfitFromRecommendations: Math.round(expectedProfitFromRecommendations),
+      actionSkuNext7Days,
+      proposedBudget: Math.round(proposedBudget),
+      highPriorityBudgetShare: proposedBudget > 0 ? Math.round((highPriorityBudget / proposedBudget) * 1000) / 10 : 0,
+    },
+    immediateActions: immediateActions.slice(0, 10),
+    capitalOpportunities: capitalOpportunities.slice(0, 8),
+    priorityBudgetMix,
+    supplierBudget: supplierBudget.slice(0, 8),
+    categoryBudget: categoryBudget.slice(0, 8),
+    sourceLabels: DATA_LAYER_LABELS,
+  }
+}
 
 export function getAverageDailySales(productId: string): number {
   const summary = getSummary(productId)
@@ -506,6 +1002,161 @@ export function getSalesByProduct(productId: string, days = 28): SalesRecord[] {
 
 export function getForecastsByProduct(productId: string, days = 28): DemandForecast[] {
   return buildForecasts(productId, days)
+}
+
+function emptyDriverCounts(): Record<ForecastDriverType, number> {
+  return {
+    weekend: 0,
+    month_boundary: 0,
+    public_holiday: 0,
+    lunar_event: 0,
+    retail_event: 0,
+  }
+}
+
+function normalizeForecastDate(date: string | Date) {
+  return typeof date === "string" ? date : toIsoDate(date)
+}
+
+function driverLiftPct(forecastQty: number, averageForecastQty: number) {
+  if (averageForecastQty <= 0) return 0
+  return Math.round(((forecastQty - averageForecastQty) / averageForecastQty) * 100)
+}
+
+function addDriver(
+  drivers: ForecastDriver[],
+  counts: Record<ForecastDriverType, number>,
+  input: Omit<ForecastDriver, "liftVsAveragePct" | "alignsWithSpike">,
+  averageForecastQty: number,
+  spikeThresholdQty: number
+) {
+  const alignsWithSpike = input.forecastQty >= spikeThresholdQty && input.forecastQty > averageForecastQty
+  drivers.push({
+    ...input,
+    liftVsAveragePct: driverLiftPct(input.forecastQty, averageForecastQty),
+    alignsWithSpike,
+  })
+  counts[input.type] += 1
+}
+
+export function getCalendarFeaturesByDate(date: string): CalendarFeature | undefined {
+  return calendarByDate.get(date)
+}
+
+export function getForecastDrivers(
+  forecastPoints: Array<{ date: string | Date; forecastQty: number }>
+): ForecastDriverSummary {
+  const points = forecastPoints
+    .map((point) => ({
+      date: normalizeForecastDate(point.date),
+      forecastQty: Math.max(0, point.forecastQty),
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date))
+
+  const counts = emptyDriverCounts()
+  if (points.length === 0) {
+    return {
+      windowStartDate: "",
+      windowEndDate: "",
+      days: 0,
+      averageForecastQty: 0,
+      peakForecastQty: 0,
+      peakForecastDate: "",
+      spikeThresholdQty: 0,
+      driverCounts: counts,
+      drivers: [],
+      spikeAlignedDrivers: [],
+      sourceLabels: DATA_LAYER_LABELS,
+    }
+  }
+
+  const totalForecast = points.reduce((sum, point) => sum + point.forecastQty, 0)
+  const averageForecastQty = Math.round((totalForecast / points.length) * 10) / 10
+  const peakPoint = points.reduce((peak, point) => point.forecastQty > peak.forecastQty ? point : peak, points[0])
+  const spikeThresholdQty = Math.round(Math.max(averageForecastQty * 1.2, averageForecastQty + (peakPoint.forecastQty - averageForecastQty) * 0.35) * 10) / 10
+  const drivers: ForecastDriver[] = []
+
+  for (const point of points) {
+    const feature = getCalendarFeaturesByDate(point.date)
+    if (!feature) continue
+
+    const base = {
+      date: point.date,
+      forecastQty: point.forecastQty,
+      sourceNote: feature.sourceNote,
+    }
+
+    if (feature.isWeekend) {
+      addDriver(drivers, counts, {
+        ...base,
+        label: "Cuối tuần",
+        type: "weekend",
+        source: "date-derived",
+      }, averageForecastQty, spikeThresholdQty)
+    }
+
+    if (feature.isMonthStart || feature.isMonthEnd) {
+      addDriver(drivers, counts, {
+        ...base,
+        label: feature.isMonthStart && feature.isMonthEnd
+          ? "Mốc đầu/cuối tháng"
+          : feature.isMonthStart
+            ? "Đầu tháng"
+            : "Cuối tháng",
+        type: "month_boundary",
+        source: "date-derived",
+      }, averageForecastQty, spikeThresholdQty)
+    }
+
+    if (feature.isPublicHoliday) {
+      addDriver(drivers, counts, {
+        ...base,
+        label: feature.holidayName || "Ngày lễ",
+        type: "public_holiday",
+        source: "factual_external_calendar",
+      }, averageForecastQty, spikeThresholdQty)
+    }
+
+    if (feature.isLunarEvent) {
+      addDriver(drivers, counts, {
+        ...base,
+        label: feature.lunarEventName || "Sự kiện âm lịch",
+        type: "lunar_event",
+        source: "factual_external_calendar",
+      }, averageForecastQty, spikeThresholdQty)
+    }
+
+    if (feature.isRetailEvent) {
+      addDriver(drivers, counts, {
+        ...base,
+        label: feature.retailEventName || "Sự kiện bán lẻ",
+        type: "retail_event",
+        source: "assumption",
+      }, averageForecastQty, spikeThresholdQty)
+    }
+  }
+
+  const spikeAlignedDrivers = drivers
+    .filter((driver) => driver.alignsWithSpike)
+    .sort((left, right) => right.forecastQty - left.forecastQty || left.date.localeCompare(right.date))
+
+  return {
+    windowStartDate: points[0].date,
+    windowEndDate: points[points.length - 1].date,
+    days: points.length,
+    averageForecastQty,
+    peakForecastQty: peakPoint.forecastQty,
+    peakForecastDate: peakPoint.date,
+    spikeThresholdQty,
+    driverCounts: counts,
+    drivers,
+    spikeAlignedDrivers,
+    sourceLabels: DATA_LAYER_LABELS,
+  }
+}
+
+export function getDemandDriversForProduct(productId: string, days = 28): ForecastDriverSummary {
+  return getForecastDrivers(getForecastsByProduct(productId, days))
 }
 
 export function getForecastChartData(productId: string, historicalDays = 28, forecastDays = 28): ForecastChartData[] {

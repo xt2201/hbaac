@@ -72,7 +72,7 @@ export function ReplenishmentCards({ suggestions, onApprove, onSkip }: Replenish
         <Check className="h-12 w-12 text-emerald-500" />
         <h3 className="mt-4 text-lg font-semibold">Tuyệt vời!</h3>
         <p className="mt-2 text-muted-foreground">
-          Không có đề xuất bổ sung hàng nào cần xử lý.
+          Không có khuyến nghị đặt hàng nào cần xử lý.
         </p>
       </Card>
     )
@@ -130,7 +130,7 @@ export function ReplenishmentCards({ suggestions, onApprove, onSkip }: Replenish
               {/* Suggestion Details */}
               <div className="space-y-2 rounded-lg bg-background/50 p-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Số lượng đề xuất</span>
+                  <span className="text-sm text-muted-foreground">Số lượng khuyến nghị</span>
                   <span className="text-lg font-bold">{suggestion.suggestedQty} đơn vị</span>
                 </div>
                 <div className="flex items-center justify-between">

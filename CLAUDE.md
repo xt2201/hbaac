@@ -27,6 +27,7 @@ AnalyticsBot needs an OpenAI-compatible chat provider:
 - Normal gateway setup: set `AI_GATEWAY_BASE_URL`, `AI_GATEWAY_AUTH_TOKEN` or `AI_GATEWAY_API_KEY`, and optionally `ANALYTICS_BOT_MODEL` in `.env.local`.
 - Without `AI_GATEWAY_BASE_URL`, `app/api/chat/route.ts` falls back to `OPENAI_API_KEY`.
 - `AI_GATEWAY_BASE_URL` may be a bare host; the route appends `/v1` unless the URL already ends in `/vN`.
+- `app/api/chat/route.ts` and `app/api/forecast-recommendation/route.ts` both use `lib/ai/model-provider.ts` (`getAnalyticsModel()`), so Forecast AI recommendations and AnalyticsBot share the same provider/model configuration.
 
 AnalyticsBot analytics data can come from a separate backend:
 - Set `ANALYTICS_BACKEND_BASE_URL` and `ANALYTICS_BACKEND_AUTH_TOKEN` to enable backend calls.
@@ -50,6 +51,24 @@ Dashboard shell:
 - `app/dashboard/layout.tsx` renders the dashboard `Sidebar`, scrollable main content, and the floating `ChatWidget` for dashboard pages.
 - `app/analytics-bot/layout.tsx` uses the same sidebar shell but does not mount the floating widget, because `/analytics-bot` already renders the full chat page.
 
+Current P0/P1/P2 dashboard implementation:
+- `/dashboard` is now the Executive Profit Command Center, focused on profit risk and purchasing decisions rather than a generic dashboard overview.
+- `app/dashboard/page.tsx` renders money-first KPIs, a "Cần hành động ngay" decision table, "Cơ hội tối ưu vốn", "Dòng tiền mua hàng", and compact source labels for dữ liệu cuộc thi, lịch ngoài, and danh mục bổ sung.
+- `lib/project-data/index.ts` exposes `getProfitCommandCenter()` and related `Profit*` types. It computes lost profit risk, locked capital, estimated holding cost, expected profit saved by replenishment recommendations, next-7-day action SKU count, budget mix by priority, supplier budget, and category budget.
+- `/dashboard/decision-queue` is the P2 Decision Queue. It renders prioritized actions derived from stock alerts and replenishment suggestions, with filters, bulk approval, and a detail drawer explaining recommendation logic and source assumptions.
+- `lib/project-data/index.ts` exports `decisionQueueItems` and `getDecisionQueueItems()`. `DecisionQueueItem` rows combine action type, financial impact, urgency/deadline, confidence, recommendation, source labels, and assumptions from real competition data plus augmented catalog/operational metadata.
+- `components/dashboard/decision-queue-table.tsx` owns the selectable/sortable TanStack table; `components/dashboard/decision-detail-drawer.tsx` owns the sheet-based explanation drawer.
+- The main dashboard no longer renders the old "Truy cập nhanh", decorative category chart, or top-selling-products block. Keep future dashboard changes decision/table oriented.
+- Placeholder actions were removed or downgraded where no real flow exists: forecast refresh/export buttons, watchlist create-order menu actions, and replenishment "Xem đơn hàng" flow.
+- Standard Vietnamese demo terminology is: "Lợi nhuận có nguy cơ mất", "Vốn bị khóa", "Rủi ro thiếu hàng", "Tồn kho dư", "Khuyến nghị đặt hàng", "Dữ liệu cuộc thi", and "Danh mục bổ sung".
+- Latest verification for this implementation: `pnpm.cmd exec tsc --noEmit`, `pnpm.cmd build:data`, and `pnpm.cmd build` passed.
+
+Forecast-to-Action implementation:
+- `/dashboard/forecast` now includes the "Khuyến nghị từ AI" card above the forecast chart, high-impact SKU mode, compact demand drivers, source badges, and the core action metrics: forecast quantity, average demand, current stock, expected stockout date, suggested order quantity, and profit impact.
+- `app/api/forecast-recommendation/route.ts` generates the forecast recommendation with the shared AnalyticsBot model from `getAnalyticsModel()`.
+- Forecast AI output is intentionally constrained to exactly five Vietnamese bullet points from a business, finance, and data analysis perspective. Do not render token usage in the UI.
+- Forecast recommendations must keep data lineage explicit: N-BEATS forecast comes from competition data; inventory/catalog/lead time fields are enriched demo assumptions.
+
 AnalyticsBot flow:
 - `components/analytics-bot/chat-interface.tsx` is the reusable chat surface. It uses `useChat<AnalyticsBotMessage>` with `DefaultChatTransport({ api: "/api/chat" })`, renders messages/tool outputs, and supports page/widget presentation via props.
 - `components/analytics-bot/chat-widget.tsx` is the floating bottom-right robot launcher for dashboard pages and embeds `ChatInterface variant="widget"`.
@@ -67,6 +86,7 @@ Analytics backend integration:
 Data model:
 - `scripts/build-project-data.mjs` reads the root-level `train.csv` and `submission_nbeats.csv`, then writes compact generated JSON into `lib/project-data/generated/`.
 - `lib/project-data/index.ts` exports SKU records, derived inventory planning levels, sales summaries, N-BEATS forecasts, stock alerts, replenishment suggestions, and helper query functions used by dashboard pages and AI tools. The sales, price, cost, SKU, and forecast metrics come from the competition files; product names/category/supplier/catalog metadata is deterministic inferred metadata because the raw files only include SKU-level transaction and forecast fields.
+- Profit command metrics in `getProfitCommandCenter()` are business planning estimates derived from competition sales/forecast/price/cost plus the augmented operational catalog. Treat inventory, supplier, lead-time, target-stock, holding-cost, and order recommendation fields as enriched demo assumptions.
 - `types/index.ts` contains the shared domain types for products, inventory, sales, forecasts, alerts, suggestions, KPIs, and older chat/tool result types.
 
 Data truth and enrichment policy:

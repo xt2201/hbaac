@@ -4,7 +4,6 @@ import { useState, useMemo } from "react"
 import { Header } from "@/components/dashboard/header"
 import { WatchlistTable } from "@/components/dashboard/watchlist-table"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -15,7 +14,7 @@ import {
 } from "@/components/ui/select"
 import { AlertTriangle, Archive, Clock } from "lucide-react"
 import { stockAlerts, CATEGORIES, CATEGORY_LABELS } from "@/lib/project-data"
-import type { ProductCategory, StockAlert } from "@/types"
+import type { ProductCategory } from "@/types"
 
 type AlertType = "stockout_risk" | "overstock" | "slow_moving"
 
@@ -69,8 +68,8 @@ export default function WatchlistPage() {
   return (
     <div className="flex flex-col">
       <Header
-        title="Cảnh báo tồn kho"
-        description="Theo dõi sản phẩm có nguy cơ hết hàng, tồn kho quá mức, hoặc bán chậm"
+        title="Rủi ro & chi phí tồn kho"
+        description="Theo dõi SKU có rủi ro thiếu hàng, tồn kho dư hoặc bán chậm"
       />
 
       <div className="flex-1 space-y-6 p-6">
@@ -83,7 +82,7 @@ export default function WatchlistPage() {
             onClick={() => setSelectedType("stockout_risk")}
           >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Nguy cơ hết hàng</CardTitle>
+              <CardTitle className="text-sm font-medium">Rủi ro thiếu hàng</CardTitle>
               <div className="rounded-lg bg-red-100 p-2">
                 <AlertTriangle className="h-4 w-4 text-red-600" />
               </div>
@@ -113,7 +112,7 @@ export default function WatchlistPage() {
             onClick={() => setSelectedType("overstock")}
           >
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Tồn kho quá mức</CardTitle>
+              <CardTitle className="text-sm font-medium">Tồn kho dư</CardTitle>
               <div className="rounded-lg bg-blue-100 p-2">
                 <Archive className="h-4 w-4 text-blue-600" />
               </div>
@@ -130,7 +129,7 @@ export default function WatchlistPage() {
                   {summary.overstock.warning} cảnh báo
                 </Badge>
                 <span className="text-xs text-muted-foreground">
-                  ~ {formatCurrency(summary.overstock.impact)} vốn đọng
+                  ~ {formatCurrency(summary.overstock.impact)} vốn bị khóa
                 </span>
               </div>
             </CardContent>
@@ -171,10 +170,10 @@ export default function WatchlistPage() {
               <div>
                 <CardTitle>
                   {selectedType === "stockout_risk"
-                    ? "Sản phẩm có nguy cơ hết hàng"
+                    ? "SKU có rủi ro thiếu hàng"
                     : selectedType === "overstock"
-                    ? "Sản phẩm tồn kho quá mức"
-                    : "Sản phẩm bán chậm"}
+                    ? "SKU tồn kho dư"
+                    : "SKU bán chậm"}
                 </CardTitle>
                 <CardDescription>
                   {filteredAlerts.length} sản phẩm cần chú ý

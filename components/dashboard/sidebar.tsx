@@ -8,6 +8,7 @@ import {
   TrendingUp,
   AlertTriangle,
   Package,
+  ListChecks,
   MessageSquare,
   ChevronLeft,
   ChevronRight,
@@ -18,7 +19,7 @@ import { useState } from "react"
 
 const navItems = [
   {
-    title: "Trang chủ",
+    title: "Điều hành lợi nhuận",
     href: "/dashboard",
     icon: LayoutDashboard,
   },
@@ -28,12 +29,17 @@ const navItems = [
     icon: TrendingUp,
   },
   {
-    title: "Cảnh báo tồn kho",
+    title: "Rủi ro thiếu hàng",
     href: "/dashboard/watchlist",
     icon: AlertTriangle,
   },
   {
-    title: "Đề xuất đặt hàng",
+    title: "Hàng chờ quyết định",
+    href: "/dashboard/decision-queue",
+    icon: ListChecks,
+  },
+  {
+    title: "Khuyến nghị đặt hàng",
     href: "/dashboard/replenishment",
     icon: Package,
   },

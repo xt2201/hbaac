@@ -42,7 +42,7 @@ export function StatsCards({ kpis }: StatsCardsProps) {
       bgColor: "bg-blue-50",
     },
     {
-      title: "Nguy cơ hết hàng",
+      title: "Rủi ro thiếu hàng",
       value: kpis.stockoutRiskCount,
       subValue: "sản phẩm cần bổ sung",
       icon: AlertTriangle,
@@ -51,7 +51,7 @@ export function StatsCards({ kpis }: StatsCardsProps) {
       highlight: kpis.stockoutRiskCount > 10,
     },
     {
-      title: "Tồn kho quá mức",
+      title: "Tồn kho dư",
       value: kpis.overstockCount,
       subValue: "sản phẩm dư thừa",
       icon: Archive,
@@ -61,7 +61,7 @@ export function StatsCards({ kpis }: StatsCardsProps) {
     {
       title: "Đang chờ xử lý",
       value: kpis.pendingOrders,
-      subValue: "đề xuất đặt hàng",
+      subValue: "khuyến nghị đặt hàng",
       icon: ShoppingCart,
       iconColor: "text-purple-600",
       bgColor: "bg-purple-50",

@@ -19,6 +19,7 @@ import {
   Package,
   BarChart3,
   Sparkles,
+  CalendarDays,
 } from "lucide-react"
 
 const SUGGESTED_QUESTIONS = [
@@ -34,7 +35,7 @@ const SUGGESTED_QUESTIONS = [
   },
   {
     icon: Package,
-    text: "Đề xuất đặt hàng khẩn cấp có những gì?",
+    text: "Khuyến nghị đặt hàng khẩn cấp có những gì?",
     color: "text-amber-600",
   },
   {
@@ -80,6 +81,26 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
       currency: "VND",
       maximumFractionDigits: 0,
     }).format(numericValue)
+  }
+
+  const formatDriverType = (type: string) => {
+    const labels: Record<string, string> = {
+      weekend: "cuối tuần",
+      month_boundary: "đầu/cuối tháng",
+      public_holiday: "ngày lễ",
+      lunar_event: "âm lịch",
+      retail_event: "bán lẻ",
+    }
+    return labels[type] ?? type.replace("_", " ")
+  }
+
+  const formatDriverSource = (source: unknown) => {
+    const labels: Record<string, string> = {
+      "date-derived": "suy ra từ ngày",
+      factual_external_calendar: "lịch có nguồn",
+      assumption: "giả định",
+    }
+    return labels[String(source)] ?? String(source)
   }
 
   const renderMetaWarning = (data: Record<string, unknown>) => {
@@ -129,11 +150,11 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
               <span className="font-medium">{formatCurrency(sales.monthlyRevenue)}</span>
             </div>
             <div className="rounded bg-background p-2">
-              <span className="text-muted-foreground">Nguy cơ hết hàng:</span>{" "}
+              <span className="text-muted-foreground">Rủi ro thiếu hàng:</span>{" "}
               <span className="font-medium text-red-600">{alerts.stockoutRisk}</span>
             </div>
             <div className="rounded bg-background p-2">
-              <span className="text-muted-foreground">Tồn kho quá mức:</span>{" "}
+              <span className="text-muted-foreground">Tồn kho dư:</span>{" "}
               <span className="font-medium text-amber-600">{alerts.overstock}</span>
             </div>
           </div>
@@ -147,8 +168,8 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
       return renderToolCard(data,
         <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium">Cảnh báo tồn kho</p>
-            <Badge variant="secondary">{summary.total as number} items</Badge>
+            <p className="text-sm font-medium">Rủi ro tồn kho</p>
+            <Badge variant="secondary">{summary.total as number} mục</Badge>
           </div>
           <div className="space-y-1">
             {alerts.slice(0, 5).map((alert, i) => (
@@ -176,8 +197,8 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
       return renderToolCard(data,
         <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium">Đề xuất bổ sung hàng</p>
-            <Badge variant="secondary">{summary.total as number} items</Badge>
+            <p className="text-sm font-medium">Khuyến nghị đặt hàng</p>
+            <Badge variant="secondary">{summary.total as number} mục</Badge>
           </div>
           <div className="space-y-1">
             {suggestions.slice(0, 5).map((s, i) => (
@@ -222,9 +243,23 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
       const product = data.product as Record<string, unknown>
       const forecast = data.forecast as Record<string, unknown>
       const inv = data.inventory as Record<string, unknown>
+      const drivers = data.drivers as Record<string, unknown> | undefined
+      const driverCounts = drivers?.driverCounts as Record<string, number> | undefined
+      const driverDates =
+        ((drivers?.spikeAlignedDates as Array<Record<string, unknown>> | undefined) ?? [])
+          .concat((drivers?.notableDates as Array<Record<string, unknown>> | undefined) ?? [])
+          .slice(0, 3)
       return renderToolCard(data,
-        <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
-          <p className="text-sm font-medium">Dự báo: {product.name as string}</p>
+        <div className="space-y-3 rounded-lg border bg-muted/50 p-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium">Dự báo: {product.name as string}</p>
+              <Badge variant="outline">Danh mục bổ sung</Badge>
+            </div>
+            {product.sourceNote ? (
+              <p className="text-xs text-muted-foreground">{String(product.sourceNote)}</p>
+            ) : null}
+          </div>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="rounded bg-background p-2">
               <span className="text-muted-foreground">Dự báo {forecast.days as number} ngày:</span>{" "}
@@ -245,6 +280,49 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
               </span>
             </div>
           </div>
+          {drivers ? (
+            <div className="space-y-2 rounded bg-background p-2 text-xs">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CalendarDays className="h-4 w-4 text-blue-600" />
+                Yếu tố nhu cầu
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-muted-foreground">Ngày đỉnh:</span>{" "}
+                  <span className="font-medium">{String(drivers.peakForecastDate ?? "N/A")}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">SL đỉnh:</span>{" "}
+                  <span className="font-medium">{String(drivers.peakForecastQty ?? "N/A")}</span>
+                </div>
+              </div>
+              {driverCounts ? (
+                <div className="flex flex-wrap gap-1">
+                  {Object.entries(driverCounts).map(([type, count]) => (
+                    <Badge key={type} variant={count > 0 ? "secondary" : "outline"} className="text-[10px]">
+                      {formatDriverType(type)}: {count}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+              {driverDates.length > 0 ? (
+                <div className="space-y-1">
+                  {driverDates.map((driver, index) => (
+                    <div key={`${driver.date}-${driver.label}-${index}`} className="flex items-center justify-between gap-2">
+                      <span className="truncate">
+                        {String(driver.date)} | {String(driver.label)}
+                      </span>
+                      <Badge variant={driver.source === "assumption" ? "outline" : "secondary"} className="text-[10px]">
+                        {formatDriverSource(driver.source)}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground">Không có yếu tố lịch ngoài cuối tuần trong cửa sổ này.</p>
+              )}
+            </div>
+          ) : null}
         </div>
       )
     }

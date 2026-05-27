@@ -44,6 +44,8 @@ export function normalizeProductForecastResponse(raw: unknown, input: { days: nu
   if (!isRecord(data)) return null
   const product = isRecord(data.product) ? data.product : data
   const forecast = isRecord(data.forecast) ? data.forecast : data
+  const drivers = isRecord(data.drivers) ? data.drivers : undefined
+  const dataLineage = isRecord(data.dataLineage) ? data.dataLineage : undefined
   const inventory = isRecord(data.inventory) ? data.inventory : data
   const recentSales = isRecord(data.recentSales) ? data.recentSales : data
 
@@ -54,6 +56,8 @@ export function normalizeProductForecastResponse(raw: unknown, input: { days: nu
       name: stringValue(product.name ?? product.productName),
       category: stringValue(product.category),
       brand: stringValue(product.brand),
+      catalogSource: stringValue(product.catalogSource, "augmented_catalog"),
+      sourceNote: stringValue(product.sourceNote, "Trường danh mục là dữ liệu làm giàu, không phải dữ liệu thô của cuộc thi."),
     },
     forecast: {
       days: numberValue(forecast.days, input.days),
@@ -61,6 +65,7 @@ export function normalizeProductForecastResponse(raw: unknown, input: { days: nu
       avgDailyDemand: String(forecast.avgDailyDemand ?? forecast.averageDailyDemand ?? (numberValue(forecast.totalForecastQty) / input.days || "0")),
       method: stringValue(forecast.method, "backend"),
     },
+    drivers,
     inventory: {
       currentStock: numberValue(inventory.currentStock ?? inventory.availableQty ?? inventory.quantity),
       reorderPoint: numberValue(inventory.reorderPoint),
@@ -71,6 +76,7 @@ export function normalizeProductForecastResponse(raw: unknown, input: { days: nu
       last30Days: numberValue(recentSales.last30Days ?? recentSales.quantity),
       avgDaily: String(recentSales.avgDaily ?? "0"),
     },
+    dataLineage,
   }
 }
 
