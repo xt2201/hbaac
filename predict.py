@@ -24,7 +24,7 @@ from configs.config import (
     DEFAULT_N_SEEDS_ENS,
 )
 from utils.data_loader import load_data
-from utils.metrics import evaluate_model
+from utils.metrics import evaluate_model, print_score
 from train import train, MODEL_REGISTRY
 
 import json
@@ -118,10 +118,14 @@ def build_submission(fc: np.ndarray, all_skus: list,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model",    type=str,  default="nhits",
-                        choices=list(MODEL_REGISTRY.keys()) + ["all"])
+    parser.add_argument("--model",    type=str,  default="nbeats",
+                        help="Model name, 'all', hoặc comma-separated list: nbeats,nhits,lgbm")
     parser.add_argument("--ensemble", type=int,  default=DEFAULT_N_SEEDS_ENS,
-                        help="Number of seeds to ensemble")
+                        help="Number of seeds to ensemble per model")
+    parser.add_argument("--weighted", action="store_true", default=True,
+                        help="Dùng inverse-WRMSSE weighting (mặc định: True)")
+    parser.add_argument("--no-weighted", dest="weighted", action="store_false",
+                        help="Dùng simple average thay vì weighted")
     parser.add_argument("--params",   type=str,  default=None,
                         help="Override params JSON path")
     args = parser.parse_args()
@@ -129,12 +133,17 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"\nDevice: {device}")
 
-    series, all_skus, submission_template, profit_weights = load_data()
+    series, all_skus, submission_template, profit_weights, sparse_mask = load_data()
 
-    models_to_run = (list(MODEL_REGISTRY.keys())
-                     if args.model == "all" else [args.model])
+    if args.model == "all":
+        models_to_run = list(MODEL_REGISTRY.keys())
+    elif "," in args.model:
+        models_to_run = [m.strip() for m in args.model.split(",")]
+    else:
+        models_to_run = [args.model]
 
     all_forecasts = []
+    all_wrmsse    = []
 
     for model_name in models_to_run:
         if args.params:
@@ -151,8 +160,23 @@ def main():
         else:
             model_params, train_params = load_best_params(model_name)
 
+        # Validation score (với early stopping) — ghi lại best_step cho full train
+        print(f"\n  Evaluating {model_name.upper()} on hold-out validation ...")
+        val_params = {**train_params, "seed": GLOBAL_SEED, "patience": 5, "eval_every": 200}
+        val_model  = train(model_name, model_params, val_params,
+                           series, profit_weights, device, verbose=False, full_train=False)
+        metrics = evaluate_model(val_model, series, profit_weights, device)
+        print_score(metrics, model_name=model_name)
+        all_wrmsse.append(metrics["wrmsse"])
+
+        # Dùng best_step từ val để full train dừng đúng chỗ
+        best_step = getattr(val_model, "_best_step", train_params.get("max_steps", DEFAULT_MAX_STEPS))
+        print(f"  Best step: {best_step} → dùng cho full training")
+        del val_model
+
+        full_train_params = {**train_params, "max_steps": best_step}
         fc = predict_one_model(model_name, series, profit_weights, device,
-                               model_params, train_params, args.ensemble)
+                               model_params, full_train_params, args.ensemble)
         all_forecasts.append(fc)
 
         # Per-model submission file
@@ -160,8 +184,27 @@ def main():
             path = os.path.join(OUTPUT_DIR, f"submission_{model_name}.csv")
             build_submission(fc, all_skus, submission_template, path)
 
-    # Final (ensemble of all models if --model all)
-    final_fc   = np.mean(all_forecasts, axis=0)
+    # Ensemble
+    if len(all_forecasts) == 1:
+        final_fc = all_forecasts[0]
+    elif args.weighted:
+        # Trọng số = 1/WRMSSE, normalize thành tổng = 1
+        raw_w  = [1.0 / w for w in all_wrmsse]
+        total  = sum(raw_w)
+        weights = [w / total for w in raw_w]
+        print(f"\n  Ensemble weights (inverse WRMSSE):")
+        for name, wt, wv in zip(models_to_run, weights, all_wrmsse):
+            print(f"    {name:10s}: weight={wt:.3f}  (val WRMSSE={wv:.4f})")
+        final_fc = sum(w * fc for w, fc in zip(weights, all_forecasts))
+    else:
+        print(f"\n  Simple average ensemble ({len(all_forecasts)} models)")
+        final_fc = np.mean(all_forecasts, axis=0)
+
+    # Zero out sparse SKUs — quá ít ngày active, không thể dự báo tin cậy
+    n_zeroed = int(sparse_mask.sum())
+    final_fc[sparse_mask] = 0.0
+    print(f"\n  Zeroed {n_zeroed:,} sparse SKUs (forecast = 0)")
+
     suffix     = "ensemble_all" if args.model == "all" else args.model
     final_path = os.path.join(OUTPUT_DIR, f"submission_{suffix}.csv")
     build_submission(final_fc, all_skus, submission_template, final_path)

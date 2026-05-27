@@ -25,7 +25,7 @@ from configs.config import (
     NHITS_STACK_CONFIGS,
 )
 from utils.data_loader import load_data
-from utils.metrics import evaluate_model
+from utils.metrics import evaluate_model, print_score
 from train import train, MODEL_REGISTRY
 
 
@@ -102,7 +102,7 @@ def run_study(model_name: str, series: np.ndarray,
     study = optuna.create_study(
         direction      = "minimize",
         sampler        = TPESampler(seed=GLOBAL_SEED, n_startup_trials=10),
-        study_name     = f"nhits_rmsse_{model_name}",
+        study_name     = f"{model_name}_rmsse_study",
         storage        = f"sqlite:///optuna_{model_name}.db",
         load_if_exists = True,
     )
@@ -139,13 +139,17 @@ def save_best(model_name: str, study: optuna.Study):
     with open(path, "w") as f:
         json.dump(result, f, indent=4)
 
-    print(f"\n{'='*55}")
-    print(f"  [{model_name.upper()}] Best WRMSSE : {best.value:.6f}")
+    best_metrics = {
+        "wrmsse"     : best.value,
+        "rmsse_mean" : best.user_attrs.get("rmsse_mean", float("nan")),
+        "rmsse_p50"  : float("nan"),
+        "rmsse_p90"  : best.user_attrs.get("rmsse_p90",  float("nan")),
+    }
+    print_score(best_metrics, model_name=model_name)
     print(f"  Trial #     : {best.number}")
     for k, v in params.items():
         print(f"  {k:22s}: {v}")
     print(f"  Saved → {path}")
-    print(f"{'='*55}")
     return result
 
 
@@ -166,7 +170,7 @@ def print_comparison(results: list[dict]):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model",  type=str, default="nhits",
+    parser.add_argument("--model",  type=str, default="nbeats",
                         choices=list(MODEL_REGISTRY.keys()) + ["all"])
     parser.add_argument("--trials", type=int, default=50)
     args = parser.parse_args()
@@ -174,7 +178,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    series, all_skus, submission_df, profit_weights = load_data()
+    series, all_skus, submission_df, profit_weights, _ = load_data()
 
     models_to_run = (list(MODEL_REGISTRY.keys())
                      if args.model == "all" else [args.model])

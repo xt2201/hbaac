@@ -28,3 +28,5 @@ Thumbs.db
 
 # Claude
 .claude/
+checkpoints/
+checkpoints/lgbm_checkpoint.pt

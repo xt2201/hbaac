@@ -10,14 +10,14 @@ Trả về:
 
 import numpy as np
 import pandas as pd
-from configs.config import TRAIN_CSV, SUBMISSION_CSV
+from configs.config import TRAIN_CSV, SUBMISSION_CSV, TRAIN_START_DATE, SPARSE_SKU_MIN_DAYS
 
 
 def _parse_vnd(series: pd.Series) -> pd.Series:
-    """Parse VND string '1,234,567' → float. Handles NaN gracefully."""
+    """Parse numeric string using comma as decimal separator, e.g. '131818,1818' → 131818.1818."""
     return (series.astype(str)
-                  .str.replace(",", "", regex=False)
                   .str.strip()
+                  .str.replace(",", ".", regex=False)
                   .replace("nan", "0")
                   .astype(float))
 
@@ -34,14 +34,19 @@ def load_data(verbose: bool = True):
     train_df["SalesAmount"]  = _parse_vnd(train_df["SalesAmount"])
     train_df["Cost Amount"]  = _parse_vnd(train_df["Cost Amount"])
 
-    # ── Profit per SKU (use ALL transactions incl. returns) ──────────────
-    # Returns DO reduce profit → SKU with many returns gets lower weight,
-    # which is realistic for importance ranking.
+    # ── Profit per SKU trên FULL data (đúng như công thức competition) ────
+    # Tính TRƯỚC khi trim để profit weights khớp với cuộc thi.
     train_df["Profit"] = train_df["SalesAmount"] - train_df["Cost Amount"]
     profit_by_sku = (train_df.groupby("ItemCode")["Profit"]
                               .sum()
                               .reset_index()
                               .rename(columns={"Profit": "profit_i"}))
+
+    # ── Bỏ dữ liệu trước TRAIN_START_DATE (structural break cuối 2021) ───
+    n_before = len(train_df)
+    train_df = train_df[train_df["Date"] >= TRAIN_START_DATE]
+    if verbose:
+        print(f"  Trimmed pre-{TRAIN_START_DATE}: {n_before - len(train_df):,} rows removed")
 
     # ── Filter out return transactions BEFORE aggregating demand ─────────
     # Returns = (Quantity, SalesAmount, Cost Amount) all negative.
@@ -82,11 +87,18 @@ def load_data(verbose: bool = True):
     total          = raw_weights.sum()
     profit_weights = raw_weights / total if total > 0 else np.ones(len(all_skus)) / len(all_skus)
 
+    # ── Sparse SKU mask ───────────────────────────────────────────────────
+    # SKU có số ngày active <= SPARSE_SKU_MIN_DAYS → forecast nên = 0
+    active_days    = (series > 0).sum(axis=1)                    # (N,)
+    sparse_mask    = active_days <= SPARSE_SKU_MIN_DAYS           # True = sparse → zero forecast
+    n_sparse       = int(sparse_mask.sum())
+
     if verbose:
         print(f"  Series matrix : {series.shape}")
         print(f"  Date range    : {pivot.columns.min().date()} → {pivot.columns.max().date()}")
         print(f"  Returns filtered : {n_returns:,} rows ({n_returns/len(train_df)*100:.2f}%)")
         print(f"  SKUs w/ profit> 0 : {(raw_weights > 0).sum()} / {len(all_skus)}")
+        print(f"  Sparse SKUs (≤{SPARSE_SKU_MIN_DAYS} days) : {n_sparse:,} / {len(all_skus)} → forecast=0")
         print(f"  Total profit  : {total:,.0f} VND")
 
-    return series, list(all_skus), submission, profit_weights
+    return series, list(all_skus), submission, profit_weights, sparse_mask
