@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AlertTriangle, Archive, Clock } from "lucide-react"
-import { stockAlerts, CATEGORIES, CATEGORY_LABELS } from "@/lib/mock-data"
+import { stockAlerts, CATEGORIES, CATEGORY_LABELS } from "@/lib/project-data"
 import type { ProductCategory, StockAlert } from "@/types"
 
 type AlertType = "stockout_risk" | "overstock" | "slow_moving"

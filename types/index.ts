@@ -62,7 +62,7 @@ export interface DemandForecast {
   forecastQty: number
   confidenceLower: number
   confidenceUpper: number
-  method: "arima" | "prophet" | "ml_ensemble"
+  method: "arima" | "prophet" | "ml_ensemble" | "nbeats"
 }
 
 export interface StockAlert {

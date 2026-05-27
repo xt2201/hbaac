@@ -6,7 +6,6 @@ import { DefaultChatTransport } from "ai"
 import type { AnalyticsBotMessage } from "@/app/api/chat/route"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
@@ -30,7 +29,7 @@ const SUGGESTED_QUESTIONS = [
   },
   {
     icon: TrendingUp,
-    text: "Dự báo nhu cầu má phanh Toyota 30 ngày tới",
+    text: "Dự báo nhu cầu má phanh Toyota 28 ngày tới",
     color: "text-blue-600",
   },
   {
@@ -45,8 +44,14 @@ const SUGGESTED_QUESTIONS = [
   },
 ]
 
-export function ChatInterface() {
+type ChatInterfaceProps = {
+  variant?: "page" | "widget"
+  className?: string
+}
+
+export function ChatInterface({ variant = "page", className }: ChatInterfaceProps) {
   const [inputValue, setInputValue] = useState("")
+  const isWidget = variant === "widget"
 
   const { messages, sendMessage, status } = useChat<AnalyticsBotMessage>({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
@@ -66,13 +71,34 @@ export function ChatInterface() {
     sendMessage({ text: question })
   }
 
-  const formatCurrency = (value: number) => {
+  const formatCurrency = (value: unknown) => {
+    const numericValue = Number(value)
+    if (!Number.isFinite(numericValue)) return "N/A"
+
     return new Intl.NumberFormat("vi-VN", {
       style: "currency",
       currency: "VND",
       maximumFractionDigits: 0,
-    }).format(value)
+    }).format(numericValue)
   }
+
+  const renderMetaWarning = (data: Record<string, unknown>) => {
+    const meta = data._meta as Record<string, unknown> | undefined
+    if (!meta?.warning) return null
+
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
+        {String(meta.warning)}
+      </div>
+    )
+  }
+
+  const renderToolCard = (data: Record<string, unknown>, content: React.ReactNode) => (
+    <div className="space-y-2">
+      {renderMetaWarning(data)}
+      {content}
+    </div>
+  )
 
   const renderToolResult = (toolName: string, output: unknown) => {
     const data = output as Record<string, unknown>
@@ -90,7 +116,7 @@ export function ChatInterface() {
       const overview = data.overview as Record<string, number>
       const alerts = data.alerts as Record<string, number>
       const sales = data.sales as Record<string, unknown>
-      return (
+      return renderToolCard(data,
         <div className="space-y-3 rounded-lg border bg-muted/50 p-3">
           <p className="text-sm font-medium">KPI Tổng quan</p>
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -100,7 +126,7 @@ export function ChatInterface() {
             </div>
             <div className="rounded bg-background p-2">
               <span className="text-muted-foreground">Doanh thu tháng:</span>{" "}
-              <span className="font-medium">{formatCurrency(sales.monthlyRevenue as number)}</span>
+              <span className="font-medium">{formatCurrency(sales.monthlyRevenue)}</span>
             </div>
             <div className="rounded bg-background p-2">
               <span className="text-muted-foreground">Nguy cơ hết hàng:</span>{" "}
@@ -118,7 +144,7 @@ export function ChatInterface() {
     if (toolName === "getStockAlerts" && data.alerts) {
       const alerts = data.alerts as Array<Record<string, unknown>>
       const summary = data.summary as Record<string, unknown>
-      return (
+      return renderToolCard(data,
         <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium">Cảnh báo tồn kho</p>
@@ -131,7 +157,7 @@ export function ChatInterface() {
                   <span className="font-mono">{alert.productSku as string}</span>
                   <span className="ml-2 text-muted-foreground">{alert.productName as string}</span>
                 </div>
-                <Badge 
+                <Badge
                   variant={alert.severity === "Nghiêm trọng" ? "destructive" : "secondary"}
                   className="text-xs"
                 >
@@ -147,7 +173,7 @@ export function ChatInterface() {
     if (toolName === "getReplenishmentSuggestions" && data.suggestions) {
       const suggestions = data.suggestions as Array<Record<string, unknown>>
       const summary = data.summary as Record<string, unknown>
-      return (
+      return renderToolCard(data,
         <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium">Đề xuất bổ sung hàng</p>
@@ -158,7 +184,7 @@ export function ChatInterface() {
               <div key={i} className="flex items-center justify-between rounded bg-background p-2 text-xs">
                 <div>
                   <span className="font-mono">{s.productSku as string}</span>
-                  <Badge 
+                  <Badge
                     variant={s.priority === "Khẩn cấp" ? "destructive" : "outline"}
                     className="ml-2 text-xs"
                   >
@@ -175,14 +201,16 @@ export function ChatInterface() {
 
     if (toolName === "getSalesAnalytics" && data.data) {
       const salesData = data.data as Array<Record<string, unknown>>
-      return (
+      return renderToolCard(data,
         <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
           <p className="text-sm font-medium">Phân tích doanh số - {data.period as string}</p>
           <div className="space-y-1">
             {salesData.slice(0, 5).map((item, i) => (
               <div key={i} className="flex items-center justify-between rounded bg-background p-2 text-xs">
-                <span>{item.category || item.productName || item.channel}</span>
-                <span className="font-medium">{formatCurrency(item.revenue as number)}</span>
+                <span>{String(item.category ?? item.productName ?? item.channel ?? "N/A")}</span>
+                <span className="font-medium">
+                  {typeof item.revenue === "number" ? formatCurrency(item.revenue) : `${item.percentage ?? "N/A"}%`}
+                </span>
               </div>
             ))}
           </div>
@@ -194,7 +222,7 @@ export function ChatInterface() {
       const product = data.product as Record<string, unknown>
       const forecast = data.forecast as Record<string, unknown>
       const inv = data.inventory as Record<string, unknown>
-      return (
+      return renderToolCard(data,
         <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
           <p className="text-sm font-medium">Dự báo: {product.name as string}</p>
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -222,7 +250,7 @@ export function ChatInterface() {
     }
 
     // Default: show JSON summary
-    return (
+    return renderToolCard(data,
       <div className="rounded-lg border bg-muted/50 p-3">
         <p className="text-xs text-muted-foreground">Tool: {toolName}</p>
         <pre className="mt-1 max-h-40 overflow-auto text-xs">
@@ -233,34 +261,32 @@ export function ChatInterface() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Messages Area */}
-      <ScrollArea className="flex-1 p-4">
+    <div className={cn("flex h-full flex-col", className)}>
+      <ScrollArea className={cn("flex-1", isWidget ? "p-3" : "p-4")}>
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center space-y-6 py-12">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-              <Sparkles className="h-8 w-8 text-primary" />
+          <div className={cn("flex h-full flex-col items-center justify-center", isWidget ? "space-y-4 py-6" : "space-y-6 py-12")}>
+            <div className={cn("flex items-center justify-center rounded-full bg-primary/10", isWidget ? "h-12 w-12" : "h-16 w-16")}>
+              <Sparkles className={cn("text-primary", isWidget ? "h-6 w-6" : "h-8 w-8")} />
             </div>
             <div className="text-center">
-              <h3 className="text-lg font-semibold">Xin chào! Tôi là AnalyticsBot</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <h3 className={cn("font-semibold", isWidget ? "text-base" : "text-lg")}>Xin chào! Tôi là AnalyticsBot</h3>
+              <p className={cn("mt-1 text-muted-foreground", isWidget ? "text-xs" : "text-sm")}>
                 Tôi có thể giúp bạn phân tích dữ liệu tồn kho, doanh số và dự báo nhu cầu.
               </p>
             </div>
 
-            {/* Suggested Questions */}
-            <div className="w-full max-w-lg space-y-2">
+            <div className={cn("w-full space-y-2", isWidget ? "max-w-sm" : "max-w-lg")}>
               <p className="text-center text-sm text-muted-foreground">Thử hỏi:</p>
               <div className="grid gap-2">
                 {SUGGESTED_QUESTIONS.map((q, i) => (
                   <Button
                     key={i}
                     variant="outline"
-                    className="h-auto justify-start px-4 py-3 text-left"
+                    className={cn("h-auto justify-start text-left", isWidget ? "px-3 py-2" : "px-4 py-3")}
                     onClick={() => handleSuggestedQuestion(q.text)}
                   >
                     <q.icon className={cn("mr-3 h-4 w-4 shrink-0", q.color)} />
-                    <span className="text-sm">{q.text}</span>
+                    <span className={cn(isWidget ? "text-xs" : "text-sm")}>{q.text}</span>
                   </Button>
                 ))}
               </div>
@@ -308,8 +334,13 @@ export function ChatInterface() {
                     // Handle tool parts
                     if (part.type.startsWith("tool-")) {
                       const toolName = part.type.replace("tool-", "")
+                      const toolPart = part as typeof part & {
+                        state?: string
+                        output?: unknown
+                        errorText?: string
+                      }
                       
-                      if (part.state === "input-streaming" || part.state === "input-available") {
+                      if (toolPart.state === "input-streaming" || toolPart.state === "input-available") {
                         return (
                           <div key={index} className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -318,18 +349,18 @@ export function ChatInterface() {
                         )
                       }
 
-                      if (part.state === "output-available" && part.output) {
+                      if (toolPart.state === "output-available" && toolPart.output) {
                         return (
                           <div key={index}>
-                            {renderToolResult(toolName, part.output)}
+                            {renderToolResult(toolName, toolPart.output)}
                           </div>
                         )
                       }
 
-                      if (part.state === "output-error") {
+                      if (toolPart.state === "output-error") {
                         return (
                           <div key={index} className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                            Lỗi: {part.errorText}
+                            Lỗi: {toolPart.errorText}
                           </div>
                         )
                       }
@@ -362,8 +393,7 @@ export function ChatInterface() {
         )}
       </ScrollArea>
 
-      {/* Input Area */}
-      <div className="border-t bg-background p-4">
+      <div className={cn("border-t bg-background", isWidget ? "p-3" : "p-4")}>
         <form onSubmit={handleSubmit} className="flex gap-2">
           <Input
             value={inputValue}

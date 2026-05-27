@@ -11,13 +11,13 @@ import {
   getCategorySalesSummary,
   getTopSellingProducts,
   CATEGORY_LABELS,
-} from "@/lib/mock-data"
+} from "@/lib/project-data"
 
 export default function DashboardPage() {
   const kpis = getDashboardKPIs()
   const recentAlerts = stockAlerts.slice(0, 5)
-  const categorySales = getCategorySalesSummary(30)
-  const topProducts = getTopSellingProducts(30, 5)
+  const categorySales = getCategorySalesSummary(28)
+  const topProducts = getTopSellingProducts(28, 5)
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("vi-VN", {
@@ -151,7 +151,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle>Doanh số theo danh mục</CardTitle>
-              <CardDescription>30 ngày gần nhất</CardDescription>
+              <CardDescription>28 ngày gần nhất</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
@@ -186,7 +186,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle>Sản phẩm bán chạy</CardTitle>
-              <CardDescription>Top 5 theo doanh thu - 30 ngày</CardDescription>
+              <CardDescription>Top 5 theo doanh thu - 28 ngày</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">

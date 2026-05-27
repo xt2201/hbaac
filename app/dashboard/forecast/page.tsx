@@ -23,18 +23,19 @@ import {
   getSalesByProduct,
   getForecastsByProduct,
   getInventoryByProduct,
+  HBAAC_DATASET_INFO,
   CATEGORY_LABELS,
-} from "@/lib/mock-data"
+} from "@/lib/project-data"
 import type { Product } from "@/types"
 
-type DateRange = "7d" | "30d" | "90d"
+type DateRange = "7d" | "28d" | "56d"
 
 export default function ForecastPage() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(products[0])
-  const [dateRange, setDateRange] = useState<DateRange>("30d")
+  const [dateRange, setDateRange] = useState<DateRange>("28d")
 
-  const historicalDays = dateRange === "7d" ? 7 : dateRange === "30d" ? 30 : 90
-  const forecastDays = dateRange === "7d" ? 7 : dateRange === "30d" ? 30 : 90
+  const historicalDays = dateRange === "7d" ? 7 : dateRange === "28d" ? 28 : 56
+  const forecastDays = dateRange === "7d" ? 7 : dateRange === "28d" ? 28 : 56
 
   // Get chart data for selected product
   const chartData = useMemo(() => {
@@ -65,7 +66,7 @@ export default function ForecastPage() {
       currentStock: inventory?.availableQty || 0,
       reorderPoint: inventory?.reorderPoint || 0,
       daysOfStock: daysOfStock.toFixed(0),
-      forecastMethod: forecasts[0]?.method || "ml_ensemble",
+      forecastMethod: forecasts[0]?.method || "nbeats",
     }
   }, [selectedProduct, historicalDays, forecastDays])
 
@@ -78,11 +79,14 @@ export default function ForecastPage() {
 
     // Group by week for comparison
     const weeks: { week: string; actual: number; forecast: number; variance: number }[] = []
+    const msPerDay = 1000 * 60 * 60 * 24
+    const anchorTime = new Date(`${HBAAC_DATASET_INFO.maxTrainDate}T00:00:00Z`).getTime()
+    const forecastStartTime = new Date(`${HBAAC_DATASET_INFO.validationStartDate}T00:00:00Z`).getTime()
 
     // Historical weeks
     for (let i = 0; i < Math.min(4, Math.floor(historicalDays / 7)); i++) {
       const weekSales = sales.filter((s) => {
-        const daysAgo = Math.floor((Date.now() - s.date.getTime()) / (1000 * 60 * 60 * 24))
+        const daysAgo = Math.floor((anchorTime - s.date.getTime()) / msPerDay)
         return daysAgo >= i * 7 && daysAgo < (i + 1) * 7
       })
       const actual = weekSales.reduce((sum, s) => sum + s.quantity, 0)
@@ -97,7 +101,7 @@ export default function ForecastPage() {
     // Forecast weeks
     for (let i = 0; i < Math.min(4, Math.floor(forecastDays / 7)); i++) {
       const weekForecasts = forecasts.filter((f) => {
-        const daysAhead = Math.floor((f.date.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+        const daysAhead = Math.floor((f.date.getTime() - forecastStartTime) / msPerDay)
         return daysAhead >= i * 7 && daysAhead < (i + 1) * 7
       })
       const forecast = weekForecasts.reduce((sum, f) => sum + f.forecastQty, 0)
@@ -132,8 +136,8 @@ export default function ForecastPage() {
             <Tabs value={dateRange} onValueChange={(v) => setDateRange(v as DateRange)}>
               <TabsList>
                 <TabsTrigger value="7d">7 ngày</TabsTrigger>
-                <TabsTrigger value="30d">30 ngày</TabsTrigger>
-                <TabsTrigger value="90d">90 ngày</TabsTrigger>
+                <TabsTrigger value="28d">28 ngày</TabsTrigger>
+                <TabsTrigger value="56d">56 ngày</TabsTrigger>
               </TabsList>
             </Tabs>
 

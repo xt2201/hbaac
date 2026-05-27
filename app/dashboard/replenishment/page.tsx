@@ -23,7 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { CheckCircle2, FileText, Package, ShoppingCart, Truck, AlertTriangle } from "lucide-react"
-import { replenishmentSuggestions, CATEGORIES, CATEGORY_LABELS, suppliers } from "@/lib/mock-data"
+import { replenishmentSuggestions, CATEGORIES, CATEGORY_LABELS, suppliers } from "@/lib/project-data"
 import type { ProductCategory, ReplenishmentSuggestion } from "@/types"
 
 type Priority = "all" | "urgent" | "high" | "medium" | "low"

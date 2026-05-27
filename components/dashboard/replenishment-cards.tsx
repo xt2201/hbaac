@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
 import type { ReplenishmentSuggestion } from "@/types"
-import { CATEGORY_LABELS } from "@/lib/mock-data"
+import { CATEGORY_LABELS } from "@/lib/project-data"
 
 interface ReplenishmentCardsProps {
   suggestions: ReplenishmentSuggestion[]

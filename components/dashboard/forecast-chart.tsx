@@ -36,7 +36,7 @@ export function ForecastChart({ data, productName }: ForecastChartProps) {
       <CardHeader>
         <CardTitle>Biểu đồ dự báo nhu cầu</CardTitle>
         <CardDescription>
-          {productName} - Dữ liệu lịch sử và dự báo 30 ngày
+          {productName} - Dữ liệu lịch sử và dự báo theo kỳ đã chọn
         </CardDescription>
       </CardHeader>
       <CardContent>

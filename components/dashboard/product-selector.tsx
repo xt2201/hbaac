@@ -18,7 +18,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import type { Product, ProductCategory } from "@/types"
-import { CATEGORY_LABELS } from "@/lib/mock-data"
+import { CATEGORY_LABELS } from "@/lib/project-data"
 
 interface ProductSelectorProps {
   products: Product[]

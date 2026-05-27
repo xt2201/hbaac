@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import type { StockAlert } from "@/types"
-import { CATEGORY_LABELS } from "@/lib/mock-data"
+import { CATEGORY_LABELS } from "@/lib/project-data"
 import { cn } from "@/lib/utils"
 
 interface WatchlistTableProps {
