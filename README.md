@@ -273,3 +273,16 @@ See **§4 V5.1** above for the recommended path (`submission_v51.csv`).
 - Features: `global_qty_index`, `is_pre_holiday`, `days_since_holiday`, Sep-2025 mask
 
 See `eda_output/EDA_REPORT.md` after `python scripts/run_eda_v2.py` (charts 01–22). Deep calendar: `audit_calendar_deep.py` → `DEEP_CALENDAR_ANALYSIS.md`.
+
+---
+
+## Web dashboard & AnalyticsBot
+
+The merged `origin/main` branch adds a Next.js app under `app/` (forecast dashboard, replenishment, watchlist, AnalyticsBot chat).
+
+```bash
+pnpm install
+pnpm dev
+```
+
+See `.env.example` for required environment variables.
