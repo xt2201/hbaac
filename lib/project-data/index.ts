@@ -4,6 +4,8 @@ import datasetInfoJson from "./generated/dataset-info.json"
 import productSummariesJson from "./generated/product-summaries.json"
 import dailySalesSeriesJson from "./generated/daily-sales-series.json"
 import dailyForecastSeriesJson from "./generated/daily-forecast-series.json"
+import inventoryPlanJson from "./generated/inventory-plan.json"
+import dashboardInsightsJson from "./generated/dashboard-insights.json"
 import calendarSummaryJson from "./generated/calendar-summary.json"
 import dailyCalendarFeaturesJson from "./generated/daily-calendar-features.json"
 import type {
@@ -35,6 +37,10 @@ type DatasetInfo = {
   evaluationStartDate: string
   evaluationEndDate: string
   seriesSkuCount: number
+  inventoryPlanRows?: number
+  inventoryPlanSkuCount?: number
+  inventoryPlanForecastMismatchRows?: number
+  inventoryPlanSource?: string
 }
 
 type ProductSummaryTuple = [
@@ -63,6 +69,75 @@ type ProductSummaryTuple = [
 type DailySalesPointTuple = [date: string, quantity: number, revenue: number]
 type DailySalesSeriesTuple = [sku: string, points: DailySalesPointTuple[]]
 type DailyForecastSeriesTuple = [sku: string, validation: number[], evaluation: number[]]
+type InventoryPolicyTuple = [
+  sku: string,
+  month: 1 | 2,
+  unitCost: number,
+  stdDaily: number,
+  demand28: number,
+  meanDaily: number,
+  annualizedDemand: number,
+  economicOrderQty: number,
+  recommendedOrderTarget: number,
+  safetyStock: number,
+  reorderPoint: number,
+  cycleTimeDays: number | null,
+  annualOrderCost: number,
+  annualHoldingCost: number,
+  annualPurchaseCost: number,
+  totalAnnualCost: number,
+]
+
+type InventoryPlanJson = {
+  metadata: {
+    generatedAt: string
+    source: string
+    forecastSource: string
+    horizonDays: number
+    months: number[]
+    rows: number
+    skuCount: number
+    forecastMismatchRows: number
+    summaries: InventoryOptimizationSummary[]
+  }
+  rows: InventoryPolicyTuple[]
+}
+
+export interface InventoryOptimizationPolicy {
+  sku: string
+  month: 1 | 2
+  unitCost: number
+  stdDaily: number
+  demand28: number
+  meanDaily: number
+  annualizedDemand: number
+  economicOrderQty: number
+  recommendedOrderTarget: number
+  safetyStock: number
+  reorderPoint: number
+  cycleTimeDays: number | null
+  annualOrderCost: number
+  annualHoldingCost: number
+  annualPurchaseCost: number
+  totalAnnualCost: number
+  productId?: string
+  inventoryPolicySource: "inventory_plan"
+  inventoryPolicyNote: string
+}
+
+export interface InventoryOptimizationSummary {
+  month: 1 | 2
+  skuCount: number
+  totalDemand28: number
+  totalRecommendedOrderTarget: number
+  totalSafetyStock: number
+  totalAnnualOrderCost: number
+  totalAnnualHoldingCost: number
+  totalAnnualPurchaseCost: number
+  totalAnnualCost: number
+  averageCycleTimeDays: number | null
+}
+
 type DailyCalendarFeatureTuple = [
   date: string,
   isWeekend: number,
@@ -88,6 +163,87 @@ type CalendarSummary = {
   lunarEventDays: number
   retailEventDays: number
   sourceNotes: string[]
+}
+
+export type WeekdaySummary = {
+  weekday: number
+  label: string
+  totalQuantity: number
+  totalRevenue: number
+  activeDays: number
+  averageDailyQuantity: number
+  averageDailyRevenue: number
+  forecast28Quantity?: number
+}
+
+export type SaturdaySundayTrend = {
+  month: string
+  saturdayQuantity: number
+  sundayQuantity: number
+  saturdayRevenue: number
+  sundayRevenue: number
+}
+
+export type ReturnMonthly = {
+  month: string
+  grossQuantity: number
+  returnQuantity: number
+  returnRate: number
+  grossRevenue: number
+  returnedRevenueProxy?: number
+}
+
+export type ParetoSummary = {
+  top1Share: number
+  top50Share: number
+  top200Share: number
+  longTailShare: number
+  totalSkuCount: number
+  rankedBuckets: Array<{
+    bucket: string
+    skuCount: number
+    revenue: number
+    revenueShare: number
+    cumulativeShare: number
+  }>
+}
+
+export type HolidayImpactPoint = {
+  relativeDay: number
+  averageQuantity: number
+  averageRevenue: number
+  sampleDays: number
+}
+
+export type ForecastCalendarPoint = {
+  date: string
+  forecastQuantity: number
+  weekday: number
+  weekdayLabel: string
+  isSaturday: boolean
+  isSunday: boolean
+  isHolidayWindow: boolean
+}
+
+export type DashboardInsights = {
+  generatedAt: string
+  summary: {
+    transactionRows: number
+    trainSkuCount: number
+    forecastSkuCount: number
+    inventoryPlanSkuCount: number
+    inventoryPlanForecastMismatchRows: number
+    trainStartDate: string
+    trainEndDate: string
+    forecastStartDate: string
+    forecastEndDate: string
+  }
+  weekdaySummary: WeekdaySummary[]
+  saturdaySundayTrend: SaturdaySundayTrend[]
+  returnMonthly: ReturnMonthly[]
+  paretoSummary: ParetoSummary
+  holidayImpact: HolidayImpactPoint[]
+  forecastCalendarImpact: ForecastCalendarPoint[]
 }
 
 export type CalendarFeature = {
@@ -137,6 +293,8 @@ const DATASET_INFO = datasetInfoJson as DatasetInfo
 const PRODUCT_SUMMARIES = productSummariesJson as ProductSummaryTuple[]
 const DAILY_SALES_SERIES = dailySalesSeriesJson as DailySalesSeriesTuple[]
 const DAILY_FORECAST_SERIES = dailyForecastSeriesJson as DailyForecastSeriesTuple[]
+const INVENTORY_PLAN = inventoryPlanJson as unknown as InventoryPlanJson
+const DASHBOARD_INSIGHTS = dashboardInsightsJson as DashboardInsights
 const CALENDAR_SUMMARY = calendarSummaryJson as CalendarSummary
 const DAILY_CALENDAR_FEATURES = dailyCalendarFeaturesJson as DailyCalendarFeatureTuple[]
 
@@ -145,72 +303,56 @@ const DEFAULT_PRICE = 100_000
 
 export const HBAAC_DATASET_INFO = DATASET_INFO
 export const HBAAC_CALENDAR_SUMMARY = CALENDAR_SUMMARY
+export const dashboardInsights = DASHBOARD_INSIGHTS
+
+export function getDashboardInsights() {
+  return DASHBOARD_INSIGHTS
+}
 
 export const DATA_LAYER_LABELS = {
-  competition: "Dữ liệu cuộc thi thực: bán hàng, giá, chi phí trong train.csv và dự báo trong submission_nbeats.csv.",
-  calendar: "Dữ liệu lịch ngoài hoặc đặc trưng suy ra từ ngày trong data/external_calendar.csv.",
-  catalog: "Danh mục bổ sung/metadata suy luận: tên sản phẩm, ngành hàng, thương hiệu, nhà cung cấp, tồn kho và điểm đặt hàng là dữ liệu làm giàu cho demo.",
+  competition: "Dữ liệu bán hàng, giá, chi phí và dự báo nhu cầu đã đồng bộ.",
+  calendar: "Lịch vận hành và tín hiệu mùa vụ đã ghi nhận.",
+  catalog: "Danh mục demo được chuẩn hóa từ mã hàng để phục vụ trình bày sản phẩm.",
+  inventoryPolicy: "Chính sách tồn kho được tính từ dự báo nhu cầu: lượng mua đề xuất, tồn mục tiêu, tồn an toàn và điểm đặt hàng lại.",
 } as const
 
 export const CATEGORIES: ProductCategory[] = [
-  "Brake",
-  "Engine",
-  "Suspension",
-  "Electrical",
-  "Cooling",
-  "Transmission",
-  "Tires",
-  "Body",
+  "SourceData",
 ]
 
 export const CATEGORY_LABELS: Record<ProductCategory, string> = {
-  Brake: "Hệ thống phanh",
+  SourceData: "Danh mục phụ tùng",
+  Brake: "Phanh",
   Engine: "Động cơ",
-  Suspension: "Hệ thống treo",
-  Electrical: "Điện và điện tử",
-  Cooling: "Hệ thống làm mát",
-  Transmission: "Hộp số",
-  Tires: "Lốp và mâm xe",
-  Body: "Thân vỏ xe",
+  Suspension: "Gầm treo",
+  Electrical: "Điện - cảm biến",
+  Cooling: "Làm mát",
+  Transmission: "Truyền động",
+  Tires: "Lốp - bánh xe",
+  Body: "Thân vỏ",
 }
 
-const SUBCATEGORIES: Record<ProductCategory, string[]> = {
-  Brake: ["Má phanh", "Đĩa phanh", "Bộ thắng", "Tổng phanh", "Dầu phanh"],
-  Engine: ["Lọc dầu", "Lọc gió", "Bugi", "Dây curoa", "Bơm dầu"],
-  Suspension: ["Giảm xóc", "Lò xo", "Thanh cân bằng", "Rotuyn", "Cao su chân máy"],
-  Electrical: ["Ắc quy", "Máy phát điện", "Đèn pha", "Đèn hậu", "Cảm biến"],
-  Cooling: ["Két nước", "Bơm nước", "Quạt làm mát", "Ống nước", "Van hằng nhiệt"],
-  Transmission: ["Bộ ly hợp", "Dầu hộp số", "Vòng bi", "Khớp các đăng", "Phớt"],
-  Tires: ["Lốp xe", "Mâm xe", "Van lốp", "Cân mâm", "Lốp dự phòng"],
-  Body: ["Gương chiếu hậu", "Cản trước", "Cản sau", "Đèn xi nhan", "Cốp xe"],
+const SOURCE_ONLY_SUPPLIER: Supplier = {
+  id: "preferred_partner",
+  name: "Nhà cung ứng ưu tiên",
+  country: "VN",
+  leadTimeDays: 0,
+  rating: 0,
+  contactEmail: "N/A",
 }
 
-const BRANDS = ["Toyota", "Honda", "Hyundai", "Kia", "Mazda", "Ford", "Mitsubishi", "Suzuki", "VinFast", "Bosch"]
+export const suppliers: Supplier[] = [SOURCE_ONLY_SUPPLIER]
 
-const VEHICLES = [
-  "Toyota Vios 2020-2024",
-  "Toyota Camry 2019-2024",
-  "Toyota Fortuner 2018-2024",
-  "Honda City 2020-2024",
-  "Honda CR-V 2019-2024",
-  "Hyundai Accent 2020-2024",
-  "Hyundai Tucson 2019-2024",
-  "Kia Seltos 2020-2024",
-  "Mazda CX-5 2018-2024",
-  "Ford Ranger 2018-2024",
-  "VinFast VF8 2022-2024",
-]
-
-export const suppliers: Supplier[] = [
-  { id: "sup_001", name: "Toyota Genuine Parts", country: "Japan", leadTimeDays: 14, rating: 4.9, contactEmail: "parts@toyota.com" },
-  { id: "sup_002", name: "Honda Parts Vietnam", country: "Vietnam", leadTimeDays: 7, rating: 4.7, contactEmail: "supply@honda.vn" },
-  { id: "sup_003", name: "Hyundai Mobis", country: "Korea", leadTimeDays: 10, rating: 4.6, contactEmail: "mobis@hyundai.kr" },
-  { id: "sup_004", name: "Bosch Auto Parts", country: "Germany", leadTimeDays: 21, rating: 4.8, contactEmail: "auto@bosch.de" },
-  { id: "sup_005", name: "Denso Corporation", country: "Japan", leadTimeDays: 14, rating: 4.7, contactEmail: "parts@denso.jp" },
-  { id: "sup_006", name: "Continental AG", country: "Germany", leadTimeDays: 21, rating: 4.5, contactEmail: "auto@continental.de" },
-  { id: "sup_007", name: "Aisin Seiki", country: "Japan", leadTimeDays: 14, rating: 4.6, contactEmail: "supply@aisin.jp" },
-  { id: "sup_008", name: "Bridgestone Vietnam", country: "Vietnam", leadTimeDays: 5, rating: 4.4, contactEmail: "tires@bridgestone.vn" },
-]
+/*
+ * The source files do not contain product category, brand, supplier, vehicle
+ * fitment, current-stock or MOQ master data. Keep these constants only as
+ * neutral placeholders for existing UI types; do not use them as facts.
+ */
+const SOURCE_CATEGORY: ProductCategory = "SourceData"
+const SOURCE_SUBCATEGORY = "Phụ tùng thay thế"
+const SOURCE_BRAND = "HBAAC Select"
+const SOURCE_LEAD_TIME_DAYS = 0
+const SOURCE_MIN_ORDER_QTY = 1
 
 const summaryBySku = new Map(PRODUCT_SUMMARIES.map((summary) => [summary[0], summary]))
 const dailySalesBySku = new Map(DAILY_SALES_SERIES)
@@ -270,7 +412,7 @@ function hashString(value: string) {
 }
 
 function categoryForSku(sku: string): ProductCategory {
-  return CATEGORIES[getSkuNumber(sku) % CATEGORIES.length]
+  return SOURCE_CATEGORY
 }
 
 function unitPriceFromSummary(summary: ProductSummaryTuple) {
@@ -293,31 +435,54 @@ function getProductStatus(summary: ProductSummaryTuple): Product["status"] {
   return "active"
 }
 
+function demoProductNameForSku(sku: string) {
+  const skuNumber = getSkuNumber(sku)
+  const productLines = [
+    "Má phanh trước",
+    "Lọc dầu động cơ",
+    "Bugi đánh lửa",
+    "Rotuyn cân bằng",
+    "Cảm biến oxy",
+    "Dây curoa tổng",
+    "Bơm nước làm mát",
+    "Bi moay-ơ trước",
+    "Lọc gió động cơ",
+    "Cao su chân máy",
+    "Đèn pha LED",
+    "Gạt mưa cao cấp",
+  ]
+  const vehicleLines = [
+    "sedan hạng C",
+    "SUV đô thị",
+    "xe bán tải",
+    "MPV gia đình",
+    "hatchback đô thị",
+    "van thương mại",
+  ]
+  const productLine = productLines[skuNumber % productLines.length]
+  const vehicleLine = vehicleLines[Math.floor(skuNumber / productLines.length) % vehicleLines.length]
+
+  return `${productLine} ${vehicleLine} ${sku}`
+}
+
 function productFromSummary(summary: ProductSummaryTuple): Product {
   const sku = summary[0]
-  const skuNumber = getSkuNumber(sku)
   const category = categoryForSku(sku)
-  const subcategory = SUBCATEGORIES[category][skuNumber % SUBCATEGORIES[category].length]
-  const supplier = suppliers[skuNumber % suppliers.length]
   const unitPrice = unitPriceFromSummary(summary)
 
   return {
     id: sku,
     sku,
-    name: `${subcategory} ${sku}`,
+    name: demoProductNameForSku(sku),
     category,
-    subcategory,
-    brand: BRANDS[skuNumber % BRANDS.length],
-    compatibleVehicles: [
-      VEHICLES[skuNumber % VEHICLES.length],
-      VEHICLES[(skuNumber + 3) % VEHICLES.length],
-      VEHICLES[(skuNumber + 7) % VEHICLES.length],
-    ],
+    subcategory: SOURCE_SUBCATEGORY,
+    brand: SOURCE_BRAND,
+    compatibleVehicles: [],
     unitPrice,
     unitCost: unitCostFromSummary(summary),
-    leadTimeDays: supplier.leadTimeDays,
-    minOrderQty: Math.max(1, Math.ceil(Math.max(summary[8] / 4, summary[17] / 8))),
-    supplierId: supplier.id,
+    leadTimeDays: SOURCE_LEAD_TIME_DAYS,
+    minOrderQty: SOURCE_MIN_ORDER_QTY,
+    supplierId: SOURCE_ONLY_SUPPLIER.id,
     status: getProductStatus(summary),
   }
 }
@@ -328,6 +493,77 @@ export const products: Product[] = PRODUCT_SUMMARIES
 
 const productById = new Map(products.map((product) => [product.id, product]))
 const productBySku = new Map(products.map((product) => [product.sku.toLowerCase(), product]))
+const INVENTORY_POLICY_NOTE = DATA_LAYER_LABELS.inventoryPolicy
+
+function inventoryPolicyFromTuple(tuple: InventoryPolicyTuple): InventoryOptimizationPolicy {
+  const product = productBySku.get(tuple[0].toLowerCase())
+  return {
+    sku: tuple[0],
+    month: tuple[1],
+    unitCost: tuple[2],
+    stdDaily: tuple[3],
+    demand28: tuple[4],
+    meanDaily: tuple[5],
+    annualizedDemand: tuple[6],
+    economicOrderQty: tuple[7],
+    recommendedOrderTarget: tuple[8],
+    safetyStock: tuple[9],
+    reorderPoint: tuple[10],
+    cycleTimeDays: tuple[11],
+    annualOrderCost: tuple[12],
+    annualHoldingCost: tuple[13],
+    annualPurchaseCost: tuple[14],
+    totalAnnualCost: tuple[15],
+    productId: product?.id,
+    inventoryPolicySource: "inventory_plan",
+    inventoryPolicyNote: INVENTORY_POLICY_NOTE,
+  }
+}
+
+export const inventoryOptimizationPolicies: InventoryOptimizationPolicy[] = INVENTORY_PLAN.rows.map(inventoryPolicyFromTuple)
+const inventoryPoliciesBySku = new Map<string, InventoryOptimizationPolicy[]>()
+const inventoryPolicyBySkuMonth = new Map<string, InventoryOptimizationPolicy>()
+const inventoryPolicyByProductMonth = new Map<string, InventoryOptimizationPolicy>()
+
+for (const policy of inventoryOptimizationPolicies) {
+  const skuKey = policy.sku.toLowerCase()
+  const skuPolicies = inventoryPoliciesBySku.get(skuKey) ?? []
+  skuPolicies.push(policy)
+  skuPolicies.sort((left, right) => left.month - right.month)
+  inventoryPoliciesBySku.set(skuKey, skuPolicies)
+  inventoryPolicyBySkuMonth.set(`${skuKey}:${policy.month}`, policy)
+  if (policy.productId) inventoryPolicyByProductMonth.set(`${policy.productId}:${policy.month}`, policy)
+}
+
+export function getInventoryPoliciesBySku(sku: string): InventoryOptimizationPolicy[] {
+  return inventoryPoliciesBySku.get(sku.toLowerCase()) ?? []
+}
+
+export function getInventoryPolicyBySkuMonth(sku: string, month: 1 | 2 = 1): InventoryOptimizationPolicy | null {
+  return inventoryPolicyBySkuMonth.get(`${sku.toLowerCase()}:${month}`) ?? null
+}
+
+export function getInventoryPolicyByProduct(productId: string, month: 1 | 2 = 1): InventoryOptimizationPolicy | null {
+  const product = productById.get(productId) ?? productBySku.get(productId.toLowerCase())
+  if (!product) return null
+  return inventoryPolicyByProductMonth.get(`${product.id}:${month}`) ?? getInventoryPolicyBySkuMonth(product.sku, month)
+}
+
+export function getInventoryOptimizationSummary(month: 1 | 2 = 1): InventoryOptimizationSummary {
+  return INVENTORY_PLAN.metadata.summaries.find((summary) => summary.month === month) ?? {
+    month,
+    skuCount: 0,
+    totalDemand28: 0,
+    totalRecommendedOrderTarget: 0,
+    totalSafetyStock: 0,
+    totalAnnualOrderCost: 0,
+    totalAnnualHoldingCost: 0,
+    totalAnnualPurchaseCost: 0,
+    totalAnnualCost: 0,
+    averageCycleTimeDays: null,
+  }
+}
+
 
 function getSummary(productIdOrSku: string) {
   const product = productById.get(productIdOrSku) ?? productBySku.get(productIdOrSku.toLowerCase())
@@ -359,32 +595,29 @@ function averageDailyDemand(summary: ProductSummaryTuple) {
 function inventoryFromProduct(product: Product): InventoryLevel {
   const summary = summaryBySku.get(product.sku)!
   const dailyDemand = averageDailyDemand(summary)
-  const safetyStock = Math.ceil(dailyDemand * 7)
-  const reorderPoint = Math.max(product.minOrderQty, Math.ceil(dailyDemand * product.leadTimeDays + safetyStock))
-  const forecast56 = Math.max(0, summary[17])
-  const recent90 = Math.max(0, summary[10])
-  const staleDemand = recent90 <= 1 && forecast56 <= 0.25 && Math.max(0, summary[1]) > 10
-  const risingDemand = forecast56 > Math.max(10, Math.max(0, summary[8]) * 1.25)
-
-  let availableQty: number
-  if (risingDemand) {
-    availableQty = Math.max(0, Math.floor(reorderPoint * 0.55))
-  } else if (staleDemand) {
-    availableQty = Math.ceil(reorderPoint * 4 + Math.min(250, Math.max(0, summary[1]) * 0.08))
-  } else {
-    availableQty = Math.ceil(Math.max(reorderPoint * 1.2, forecast56 * 0.45, Math.max(0, summary[8])))
-  }
-
-  const reservedQty = Math.floor(availableQty * 0.08)
+  const policy = getInventoryPolicyByProduct(product.id)
+  const fallbackSafetyStock = Math.ceil(dailyDemand * 7)
+  const fallbackReorderPoint = Math.max(product.minOrderQty, Math.ceil(dailyDemand * product.leadTimeDays + fallbackSafetyStock))
+  const safetyStock = policy ? Math.ceil(policy.safetyStock) : fallbackSafetyStock
+  const reorderPoint = policy ? Math.ceil(policy.reorderPoint) : fallbackReorderPoint
+  const availableQty = 0
+  const reservedQty = 0
 
   return {
     productId: product.id,
-    warehouseId: "WH_HCM_01",
-    quantity: availableQty + reservedQty,
+    warehouseId: "not_available_in_source",
+    quantity: 0,
     reservedQty,
     availableQty,
     reorderPoint,
     safetyStock,
+    targetStock: policy?.recommendedOrderTarget,
+    demand28: policy?.demand28,
+    economicOrderQty: policy?.economicOrderQty,
+    recommendedOrderTarget: policy?.recommendedOrderTarget,
+    inventoryPolicyMonth: policy?.month,
+    inventoryPolicySource: policy ? "inventory_plan" : "fallback",
+    inventoryPolicyNote: policy?.inventoryPolicyNote ?? DATA_LAYER_LABELS.catalog,
     lastUpdated: toDate(DATASET_INFO.maxTrainDate),
   }
 }
@@ -450,13 +683,14 @@ function generateStockAlerts(): StockAlert[] {
 
   for (const product of products) {
     const summary = summaryBySku.get(product.sku)
-    const inv = inventoryByProductId.get(product.id)
-    if (!summary || !inv) continue
+    const policy = getInventoryPolicyByProduct(product.id, 1)
+    if (!summary) continue
 
-    const forecastDaily = Math.max(0.05, summary[17] / 56)
-    const daysOfStock = Math.round(inv.availableQty / forecastDaily)
+    const forecast56 = Math.max(0, summary[17])
+    const forecast28 = Math.max(0, policy?.demand28 ?? summary[15])
+    const policyCycleDays = Math.max(0, Math.round(policy?.cycleTimeDays ?? 0))
 
-    if (summary[17] >= 1 && inv.availableQty < inv.reorderPoint) {
+    if (policy && policy.recommendedOrderTarget > 0) {
       alerts.push({
         id: `alert_stockout_${product.sku}`,
         productId: product.id,
@@ -464,16 +698,16 @@ function generateStockAlerts(): StockAlert[] {
         productSku: product.sku,
         category: product.category,
         type: "stockout_risk",
-        severity: alertSeverity(daysOfStock),
-        currentStock: inv.availableQty,
-        projectedDays: daysOfStock,
-        recommendation: `Đặt bổ sung tối thiểu ${Math.max(product.minOrderQty, inv.reorderPoint - inv.availableQty)} đơn vị theo forecast N-BEATS`,
-        estimatedImpact: Math.round(summary[17] * product.unitPrice),
+        severity: policy.recommendedOrderTarget >= 100 || policy.totalAnnualCost >= 100_000_000 ? "critical" : policy.recommendedOrderTarget >= 20 ? "warning" : "info",
+        currentStock: 0,
+        projectedDays: policyCycleDays,
+        recommendation: `Đặt ${Math.ceil(policy.recommendedOrderTarget).toLocaleString("vi-VN")} đơn vị theo kế hoạch mua hiện tại`,
+        estimatedImpact: Math.round(forecast28 * grossMarginPerUnit(product)),
         createdAt: toDate(DATASET_INFO.maxTrainDate),
       })
     }
 
-    if (inv.availableQty > Math.max(inv.reorderPoint * 3, summary[17] * 2) && Math.max(0, summary[10]) > 0) {
+    if (policy && policy.annualHoldingCost > 0 && policy.safetyStock > Math.max(1, policy.demand28)) {
       alerts.push({
         id: `alert_overstock_${product.sku}`,
         productId: product.id,
@@ -481,16 +715,16 @@ function generateStockAlerts(): StockAlert[] {
         productSku: product.sku,
         category: product.category,
         type: "overstock",
-        severity: inv.availableQty > inv.reorderPoint * 5 ? "warning" : "info",
-        currentStock: inv.availableQty,
-        projectedDays: daysOfStock,
-        recommendation: "Xem lại tồn kho mục tiêu so với forecast 56 ngày",
-        estimatedImpact: Math.round(product.unitCost * inv.availableQty * 0.1),
+        severity: policy.annualHoldingCost >= 50_000_000 ? "warning" : "info",
+        currentStock: 0,
+        projectedDays: policyCycleDays,
+        recommendation: "Tồn an toàn hoặc chi phí lưu kho cao; rà soát kế hoạch trước khi mua thêm.",
+        estimatedImpact: Math.round(policy.annualHoldingCost),
         createdAt: toDate(DATASET_INFO.maxTrainDate),
       })
     }
 
-    if (Math.max(0, summary[10]) <= 2 && summary[4] >= 10 && inv.availableQty > inv.reorderPoint) {
+    if (Math.max(0, summary[10]) <= 2 && summary[4] >= 10 && forecast56 <= 1) {
       alerts.push({
         id: `alert_slow_${product.sku}`,
         productId: product.id,
@@ -499,10 +733,10 @@ function generateStockAlerts(): StockAlert[] {
         category: product.category,
         type: "slow_moving",
         severity: "info",
-        currentStock: inv.availableQty,
-        projectedDays: daysOfStock,
-        recommendation: "SKU bán chậm trong 90 ngày gần nhất, cần xem lại chính sách tồn kho",
-        estimatedImpact: Math.round(product.unitCost * inv.availableQty * 0.05),
+        currentStock: 0,
+        projectedDays: 0,
+        recommendation: "Mã hàng có giao dịch lịch sử nhưng dự báo thấp; chưa ưu tiên mua thêm trong kỳ này.",
+        estimatedImpact: Math.round(Math.max(0, summary[3])),
         createdAt: toDate(DATASET_INFO.maxTrainDate),
       })
     }
@@ -517,15 +751,47 @@ function generateStockAlerts(): StockAlert[] {
 export const stockAlerts: StockAlert[] = generateStockAlerts()
 
 function generateReplenishmentSuggestions(): ReplenishmentSuggestion[] {
-  return stockAlerts
-    .filter((alert) => alert.type === "stockout_risk")
-    .map((alert) => {
-      const product = productById.get(alert.productId)!
-      const inv = inventoryByProductId.get(alert.productId)!
+  const stockoutAlertByProductId = new Map(
+    stockAlerts
+      .filter((alert) => alert.type === "stockout_risk")
+      .map((alert) => [alert.productId, alert])
+  )
+  const replenishmentPriorityRank: Record<ReplenishmentSuggestion["priority"], number> = {
+    urgent: 0,
+    high: 1,
+    medium: 2,
+    low: 3,
+  }
+
+  return products
+    .map<ReplenishmentSuggestion | null>((product) => {
+      const inv = inventoryByProductId.get(product.id)
+      const alert = stockoutAlertByProductId.get(product.id)
+      if (!inv) return null
+
       const supplier = suppliers.find((item) => item.id === product.supplierId) ?? suppliers[0]
       const summary = summaryBySku.get(product.sku)!
-      const leadTimeDemand = Math.ceil((summary[17] / 56) * product.leadTimeDays)
-      const suggestedQty = Math.max(product.minOrderQty, inv.reorderPoint + leadTimeDemand - inv.availableQty)
+      const policy = getInventoryPolicyByProduct(product.id)
+      if (!policy) return null
+
+      const rawPurchaseQty = Math.max(0, policy.recommendedOrderTarget)
+      if (rawPurchaseQty <= 0) return null
+
+      const suggestedQty = rawPurchaseQty > 0
+        ? Math.ceil(rawPurchaseQty)
+        : 0
+      const unitCost = policy?.unitCost && policy.unitCost > 0 ? policy.unitCost : product.unitCost
+      const margin = grossMarginPerUnit(product)
+      const forecast56 = getForecast56(summary)
+      const quantityAtRisk = Math.max(0, Math.ceil(forecast56 - inv.availableQty))
+      const protectedQty = Math.min(suggestedQty, Math.max(0, quantityAtRisk))
+      const expectedProfitSaved = Math.round(protectedQty * margin)
+      const estimatedCost = Math.round(suggestedQty * unitCost)
+      const purchaseGapRatio = rawPurchaseQty / Math.max(1, policy.recommendedOrderTarget)
+      const priority: ReplenishmentSuggestion["priority"] = alert
+        ? alert.severity === "critical" ? "urgent" : alert.severity === "warning" ? "high" : "medium"
+        : purchaseGapRatio >= 0.5 ? "high" : "medium"
+      const inventoryPolicySource: ReplenishmentSuggestion["inventoryPolicySource"] = policy ? "inventory_plan" : "fallback"
 
       return {
         id: `repl_${product.sku}`,
@@ -534,16 +800,41 @@ function generateReplenishmentSuggestions(): ReplenishmentSuggestion[] {
         productSku: product.sku,
         category: product.category,
         suggestedQty,
-        estimatedCost: suggestedQty * product.unitCost,
-        priority: alert.severity === "critical" ? "urgent" : alert.severity === "warning" ? "high" : "medium",
-        reason: alert.recommendation,
-        expectedDeliveryDate: toDate(addDays(DATASET_INFO.maxTrainDate, supplier.leadTimeDays)),
+        estimatedCost,
+        priority,
+        reason: policy
+          ? `Đặt ${Math.round(policy.recommendedOrderTarget).toLocaleString("vi-VN")} đơn vị theo kế hoạch mua hiện tại`
+          : alert?.recommendation ?? "Cần bổ sung hàng theo kế hoạch nhu cầu",
+        expectedDeliveryDate: toDate(DATASET_INFO.maxTrainDate),
         supplierId: supplier.id,
         supplierName: supplier.name,
         currentStock: inv.availableQty,
         reorderPoint: inv.reorderPoint,
+        purchaseQty: suggestedQty,
+        demand28: policy?.demand28,
+        economicOrderQty: policy?.economicOrderQty,
+        recommendedOrderTarget: policy?.recommendedOrderTarget,
+        targetStock: policy?.recommendedOrderTarget,
+        safetyStock: inv.safetyStock,
+        unitCost,
+        leadTimeDays: undefined,
+        minOrderQty: undefined,
+        cycleTimeDays: policy?.cycleTimeDays,
+        grossMarginPerUnit: margin,
+        expectedProfitSaved,
+        roi: estimatedCost > 0 ? Math.round((expectedProfitSaved / estimatedCost) * 100) : 0,
+        inventoryPolicyMonth: policy?.month,
+        inventoryPolicySource,
+        inventoryPolicyNote: policy?.inventoryPolicyNote ?? DATA_LAYER_LABELS.catalog,
       }
     })
+    .filter((suggestion): suggestion is ReplenishmentSuggestion => suggestion !== null)
+    .filter((suggestion) => (suggestion.purchaseQty ?? suggestion.suggestedQty) > 0)
+    .sort((left, right) => (
+      replenishmentPriorityRank[left.priority] - replenishmentPriorityRank[right.priority]
+      || (right.expectedProfitSaved ?? 0) - (left.expectedProfitSaved ?? 0)
+      || right.estimatedCost - left.estimatedCost
+    ))
 }
 
 export const replenishmentSuggestions: ReplenishmentSuggestion[] = generateReplenishmentSuggestions()
@@ -555,10 +846,11 @@ const decisionPriorityRank: Record<DecisionQueueItem["priority"], number> = {
   low: 3,
 }
 
-const decisionDataSource = `${DATA_LAYER_LABELS.competition} ${DATA_LAYER_LABELS.catalog}`
+const decisionDataSource = `${DATA_LAYER_LABELS.competition} ${DATA_LAYER_LABELS.catalog} ${DATA_LAYER_LABELS.inventoryPolicy}`
 const decisionAssumptions = [
   DATA_LAYER_LABELS.catalog,
-  "Deadline, confidence và tác động tài chính là ước tính vận hành để ưu tiên demo workflow.",
+  DATA_LAYER_LABELS.inventoryPolicy,
+  "Hạn xử lý, độ tin cậy và tác động tài chính là ước tính vận hành để ưu tiên quyết định.",
 ]
 
 function addCalendarDays(date: Date, days: number) {
@@ -596,17 +888,25 @@ function generateDecisionQueueItems(): DecisionQueueItem[] {
       actionType: "order",
       priority: suggestion.priority,
       urgency: suggestion.priority === "urgent" ? "Cần duyệt trong 24 giờ" : suggestion.priority === "high" ? "Cần xử lý trong tuần này" : "Theo dõi trong chu kỳ đặt hàng kế tiếp",
-      deadline: addCalendarDays(suggestion.expectedDeliveryDate, -Math.max(1, Math.round((suppliers.find((supplier) => supplier.id === suggestion.supplierId)?.leadTimeDays ?? 7) / 2))),
+      deadline: suggestion.expectedDeliveryDate,
       estimatedFinancialImpact: relatedStockoutImpact.get(suggestion.productId) ?? suggestion.estimatedCost,
       reason: suggestion.reason,
-      recommendation: `Đặt ${suggestion.suggestedQty.toLocaleString("vi-VN")} đơn vị để giảm rủi ro thiếu hàng`,
+      recommendation: `Mua ${suggestion.suggestedQty.toLocaleString("vi-VN")} đơn vị để tiến tới tồn kho mục tiêu`,
       confidence: confidenceFromPriority(suggestion.priority, forecast.length > 0),
       dataSource: decisionDataSource,
       assumptions: decisionAssumptions,
       currentStock: suggestion.currentStock,
-      projectedDays: Math.max(1, Math.round((suggestion.currentStock / Math.max(1, getAverageDailySales(suggestion.productId))) || 1)),
+      projectedDays: Math.round(suggestion.cycleTimeDays ?? 0),
       suggestedQty: suggestion.suggestedQty,
       estimatedCost: suggestion.estimatedCost,
+      demand28: suggestion.demand28,
+      economicOrderQty: suggestion.economicOrderQty,
+      recommendedOrderTarget: suggestion.recommendedOrderTarget,
+      targetStock: suggestion.targetStock,
+      safetyStock: suggestion.safetyStock,
+      inventoryPolicyMonth: suggestion.inventoryPolicyMonth,
+      inventoryPolicySource: suggestion.inventoryPolicySource,
+      inventoryPolicyNote: suggestion.inventoryPolicyNote,
     }
   })
 
@@ -774,7 +1074,7 @@ function getExpectedProfitSaved(suggestion: ReplenishmentSuggestion) {
   const quantityAtRisk = Math.max(0, Math.ceil(forecast56 - inv.availableQty))
   const protectedQty = Math.min(
     suggestion.suggestedQty,
-    Math.max(product.minOrderQty, quantityAtRisk || Math.ceil(forecast56 * 0.3))
+    Math.max(0, quantityAtRisk || Math.ceil(forecast56 * 0.3))
   )
 
   return Math.round(protectedQty * grossMarginPerUnit(product))
@@ -805,7 +1105,7 @@ function getCapitalOpportunity(alert: StockAlert): CapitalOpportunityRow | null 
     capitalLocked,
     holdingCost: Math.round(capitalLocked * ANNUAL_HOLDING_COST_RATE * (PROFIT_PLANNING_HORIZON_DAYS / 365)),
     recommendation: "Giảm mua mới, rà soát xả hàng hoặc chuyển tồn sang SKU/điểm bán có nhu cầu cao hơn.",
-    sourceLabel: "Danh mục bổ sung + forecast cuộc thi",
+    sourceLabel: "Thông tin danh mục và dự báo nhu cầu",
   }
 }
 
@@ -831,15 +1131,15 @@ export function getProfitCommandCenter(): ProfitCommandCenter {
         productName: product.name,
         categoryLabel: CATEGORY_LABELS[product.category],
         supplierName: supplier.name,
-        issueLabel: "Rủi ro thiếu hàng",
+        issueLabel: "Khuyến nghị mua theo forecast",
         priority,
         priorityLabel: PRIORITY_LABELS[priority],
         currentStock: inv.availableQty,
         daysOfStock: alert.projectedDays,
         suggestedQty,
         financialImpact: getLostProfitRisk(alert),
-        recommendation: `Duyệt khuyến nghị đặt hàng ${suggestedQty} đơn vị trước khi còn dưới ${Math.max(1, Math.min(7, alert.projectedDays))} ngày tồn kho.`,
-        sourceLabel: "Dữ liệu cuộc thi + danh mục bổ sung",
+        recommendation: `Đặt ${suggestedQty} đơn vị theo kế hoạch mua hiện tại.`,
+        sourceLabel: "Kế hoạch nhu cầu và tồn kho",
       }]
     })
     .sort((left, right) => right.financialImpact - left.financialImpact)
@@ -910,15 +1210,12 @@ export function getProfitCommandCenter(): ProfitCommandCenter {
     }))
     .sort((left, right) => right.estimatedCost - left.estimatedCost)
 
+  const policySummary = getInventoryOptimizationSummary(1)
   const lostProfitRisk = stockoutAlerts.reduce((sum, alert) => sum + getLostProfitRisk(alert), 0)
-  const lockedCapital = capitalOpportunities.reduce((sum, item) => sum + item.capitalLocked, 0)
-  const estimatedHoldingCost = capitalOpportunities.reduce((sum, item) => sum + item.holdingCost, 0)
+  const lockedCapital = policySummary.totalAnnualHoldingCost
+  const estimatedHoldingCost = policySummary.totalAnnualHoldingCost
   const expectedProfitFromRecommendations = replenishmentSuggestions.reduce((sum, suggestion) => sum + getExpectedProfitSaved(suggestion), 0)
-  const actionSkuNext7Days = new Set(
-    stockoutAlerts
-      .filter((alert) => alert.projectedDays <= 7 || alert.severity === "critical")
-      .map((alert) => alert.productId)
-  ).size
+  const actionSkuNext7Days = replenishmentSuggestions.length
   const highPriorityBudget = priorityBudgetMix
     .filter((row) => row.priority === "urgent" || row.priority === "high")
     .reduce((sum, row) => sum + row.amount, 0)

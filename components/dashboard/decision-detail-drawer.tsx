@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -11,7 +12,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { CATEGORY_LABELS } from "@/lib/project-data"
 import type { DecisionActionType, DecisionPriority, DecisionQueueItem } from "@/types"
 
 interface DecisionDetailDrawerProps {
@@ -66,7 +66,7 @@ export function DecisionDetailDrawer({ item, open, onOpenChange, onApprove }: De
             <SheetHeader>
               <SheetTitle>{item.productName}</SheetTitle>
               <SheetDescription>
-                <span className="font-mono">{item.productSku}</span> · {CATEGORY_LABELS[item.category]} · {item.supplierName}
+                <span className="font-mono">{item.productSku}</span> · dự báo nhu cầu và chính sách tồn kho
               </SheetDescription>
             </SheetHeader>
 
@@ -75,13 +75,13 @@ export function DecisionDetailDrawer({ item, open, onOpenChange, onApprove }: De
                 <div className="flex flex-wrap gap-2">
                   <Badge variant={priorityVariant(item.priority)}>{priorityLabels[item.priority]}</Badge>
                   <Badge variant="outline">{actionLabels[item.actionType]}</Badge>
-                  <Badge variant="secondary">Tin cậy {item.confidence}%</Badge>
+                  <Badge variant="secondary">Điểm ưu tiên {item.confidence}%</Badge>
                 </div>
                 <div className="rounded-lg border bg-card p-4">
                   <p className="text-sm text-muted-foreground">Khuyến nghị</p>
                   <p className="mt-1 font-medium">{item.recommendation}</p>
                   <p className="mt-3 text-sm text-muted-foreground">{item.urgency}</p>
-                  <p className="text-sm">Deadline: {formatDate(item.deadline)}</p>
+                  <p className="text-sm">Ngày dữ liệu: {formatDate(item.deadline)}</p>
                 </div>
               </section>
 
@@ -91,12 +91,12 @@ export function DecisionDetailDrawer({ item, open, onOpenChange, onApprove }: De
                   <p className="text-lg font-semibold">{formatCurrency(item.estimatedFinancialImpact)}</p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Tồn kho hiện tại</p>
-                  <p className="text-lg font-semibold">{item.currentStock.toLocaleString("vi-VN")} đơn vị</p>
+                  <p className="text-xs text-muted-foreground">Lượng mua đề xuất</p>
+                  <p className="text-lg font-semibold">{(item.suggestedQty ?? 0).toLocaleString("vi-VN")} đơn vị</p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Ngày tồn kho dự kiến</p>
-                  <p className="text-lg font-semibold">{item.projectedDays.toLocaleString("vi-VN")} ngày</p>
+                  <p className="text-xs text-muted-foreground">Thời điểm ưu tiên xử lý</p>
+                  <p className="text-lg font-semibold">{item.projectedDays > 0 ? `${item.projectedDays.toLocaleString("vi-VN")} ngày` : "Chưa ước tính"}</p>
                 </div>
                 {item.estimatedCost !== undefined && (
                   <div className="rounded-lg border p-3">
@@ -108,20 +108,20 @@ export function DecisionDetailDrawer({ item, open, onOpenChange, onApprove }: De
 
               {item.suggestedQty !== undefined && (
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Số lượng đề xuất</p>
+                  <p className="text-xs text-muted-foreground">Lượng đề xuất theo kế hoạch</p>
                   <p className="text-lg font-semibold">{item.suggestedQty.toLocaleString("vi-VN")} đơn vị</p>
                 </div>
               )}
 
               <section className="space-y-2">
-                <h3 className="font-medium">Lý do</h3>
+                <h3 className="font-medium">Vì sao cần xử lý ngay?</h3>
                 <p className="text-sm text-muted-foreground">{item.reason}</p>
               </section>
 
               <Separator />
 
               <section className="space-y-3">
-                <h3 className="font-medium">Nguồn dữ liệu và giả định</h3>
+                <h3 className="font-medium">Cơ sở tính toán</h3>
                 <p className="text-sm text-muted-foreground">{item.dataSource}</p>
                 <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
                   {item.assumptions.map((assumption) => (
@@ -131,7 +131,20 @@ export function DecisionDetailDrawer({ item, open, onOpenChange, onApprove }: De
               </section>
             </div>
 
-            <SheetFooter>
+            <SheetFooter className="gap-2 sm:flex-col sm:space-x-0">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button asChild variant="outline">
+                  <Link href={`/analytics-bot?prompt=${encodeURIComponent(`Giải thích vì sao ${item.productSku} cần ${actionLabels[item.actionType].toLowerCase()} ngay trong 5 gạch đầu dòng.`)}`}>
+                    Hỏi trợ lý phân tích
+                  </Link>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link href={`/dashboard/forecast?productId=${item.productId}`}>Xem dự báo</Link>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link href={`/dashboard/replenishment?productId=${item.productId}`}>Mô phỏng mua hàng</Link>
+                </Button>
+              </div>
               <Button
                 onClick={() => {
                   onApprove(item.id)

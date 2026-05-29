@@ -71,3 +71,4 @@ __v0_jsx-dev-runtime.ts
 # Next.js / Node
 node_modules
 .next/
+.tmp/

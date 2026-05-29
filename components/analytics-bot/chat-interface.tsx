@@ -20,38 +20,47 @@ import {
   BarChart3,
   Sparkles,
   CalendarDays,
+  WalletCards,
 } from "lucide-react"
 
-const SUGGESTED_QUESTIONS = [
+type SuggestedQuestion = {
+  icon: React.ElementType
+  text: string
+  color: string
+}
+
+const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
+  {
+    icon: WalletCards,
+    text: "Nếu ngân sách mua hàng là 500 triệu, nên ưu tiên SKU nào?",
+    color: "text-emerald-600",
+  },
   {
     icon: AlertTriangle,
-    text: "Sản phẩm nào đang có nguy cơ hết hàng?",
+    text: "Mã hàng nào có lợi nhuận có nguy cơ mất cao nhất?",
     color: "text-red-600",
   },
   {
-    icon: TrendingUp,
-    text: "Dự báo nhu cầu má phanh Toyota 28 ngày tới",
-    color: "text-blue-600",
-  },
-  {
     icon: Package,
-    text: "Khuyến nghị đặt hàng khẩn cấp có những gì?",
+    text: "Giải thích vì sao SKU cần đặt hàng ngay.",
     color: "text-amber-600",
   },
   {
     icon: BarChart3,
-    text: "Top 5 sản phẩm bán chạy nhất tháng này",
-    color: "text-emerald-600",
+    text: "Độ tin cậy dự báo hiện có điểm nào cần chú ý?",
+    color: "text-blue-600",
   },
 ]
 
 type ChatInterfaceProps = {
   variant?: "page" | "widget"
   className?: string
+  contextPrompts?: string[]
+  initialPrompt?: string
 }
 
-export function ChatInterface({ variant = "page", className }: ChatInterfaceProps) {
-  const [inputValue, setInputValue] = useState("")
+export function ChatInterface({ variant = "page", className, contextPrompts = [], initialPrompt }: ChatInterfaceProps) {
+  const [inputValue, setInputValue] = useState(initialPrompt ?? "")
   const isWidget = variant === "widget"
 
   const { messages, sendMessage, status } = useChat<AnalyticsBotMessage>({
@@ -59,6 +68,10 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
   })
 
   const isLoading = status === "streaming" || status === "submitted"
+  const quickQuestions: SuggestedQuestion[] = [
+    ...contextPrompts.map((text) => ({ icon: Sparkles, text, color: "text-violet-600" })),
+    ...SUGGESTED_QUESTIONS,
+  ].slice(0, isWidget ? 4 : 6)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -74,7 +87,7 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
 
   const formatCurrency = (value: unknown) => {
     const numericValue = Number(value)
-    if (!Number.isFinite(numericValue)) return "N/A"
+    if (!Number.isFinite(numericValue)) return "Chưa có"
 
     return new Intl.NumberFormat("vi-VN", {
       style: "currency",
@@ -96,22 +109,15 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
 
   const formatDriverSource = (source: unknown) => {
     const labels: Record<string, string> = {
-      "date-derived": "suy ra từ ngày",
-      factual_external_calendar: "lịch có nguồn",
-      assumption: "giả định",
+      "date-derived": "theo lịch vận hành",
+      factual_external_calendar: "lịch vận hành",
+      assumption: "cơ sở tính toán",
     }
     return labels[String(source)] ?? String(source)
   }
 
   const renderMetaWarning = (data: Record<string, unknown>) => {
-    const meta = data._meta as Record<string, unknown> | undefined
-    if (!meta?.warning) return null
-
-    return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
-        {String(meta.warning)}
-      </div>
-    )
+    return null
   }
 
   const renderToolCard = (data: Record<string, unknown>, content: React.ReactNode) => (
@@ -139,10 +145,10 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
       const sales = data.sales as Record<string, unknown>
       return renderToolCard(data,
         <div className="space-y-3 rounded-lg border bg-muted/50 p-3">
-          <p className="text-sm font-medium">KPI Tổng quan</p>
+          <p className="text-sm font-medium">KPI vận hành</p>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="rounded bg-background p-2">
-              <span className="text-muted-foreground">Tổng SKU:</span>{" "}
+              <span className="text-muted-foreground">Tổng mã hàng:</span>{" "}
               <span className="font-medium">{overview.totalSKUs}</span>
             </div>
             <div className="rounded bg-background p-2">
@@ -212,10 +218,62 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
                     {s.priority as string}
                   </Badge>
                 </div>
-                <span className="font-medium">{s.suggestedQty as number} đơn vị</span>
+                <span className="font-medium">{s.purchaseQty as number ?? s.suggestedQty as number} đơn vị</span>
               </div>
             ))}
           </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {suggestions.slice(0, 2).map((s, i) => (
+              <div key={`policy-${i}`} className="rounded bg-background p-2">
+                <div className="font-mono">{s.productSku as string}</div>
+                <div className="text-muted-foreground">Lượng mua {String(s.recommendedOrder ?? s.suggestedQty ?? "Không có dữ liệu")} · Điểm đặt hàng {String(s.reorderPoint ?? "Không có dữ liệu")}</div>
+                <div className="text-muted-foreground">Lô mua tối ưu {String(s.economicOrderQty ?? "Không có dữ liệu")} · Tồn an toàn {String(s.safetyStock ?? "Không có dữ liệu")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
+
+    if (toolName === "getInventoryPolicy" && (data.rows || data.policy || data.summaries)) {
+      const rows = ((data.rows as Array<Record<string, unknown>> | undefined) ?? (data.policy ? [data.policy as Record<string, unknown>] : [])).slice(0, 5)
+      const summaries = (data.summaries as Array<Record<string, unknown>> | undefined) ?? []
+      const monthSummary = summaries.find((summary) => summary.month === data.month) ?? summaries[0]
+      return renderToolCard(data,
+        <div className="space-y-3 rounded-lg border bg-muted/50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium">Kế hoạch tồn kho</p>
+            <Badge variant="outline">Kỳ {String(data.month ?? (data.policy as Record<string, unknown> | undefined)?.month ?? 1)}</Badge>
+          </div>
+          {monthSummary ? (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded bg-background p-2">
+                <span className="text-muted-foreground">Mã hàng có kế hoạch:</span>{" "}
+                <span className="font-medium">{String(monthSummary.skuCount ?? "0")}</span>
+              </div>
+              <div className="rounded bg-background p-2">
+                <span className="text-muted-foreground">Chi phí vận hành năm:</span>{" "}
+                <span className="font-medium">{formatCurrency(monthSummary.totalAnnualCost)}</span>
+              </div>
+            </div>
+          ) : null}
+          <div className="space-y-1">
+            {rows.map((row, i) => (
+              <div key={i} className="rounded bg-background p-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono">{String(row.productSku ?? "SKU")}</span>
+                  <span className="font-medium">Mua {String(row.purchaseQty ?? 0)}</span>
+                </div>
+                <div className="mt-1 grid grid-cols-2 gap-1 text-muted-foreground">
+                  <span>Lượng mua: {String(row.recommendedOrder ?? row.targetStock ?? "Không có dữ liệu")}</span>
+                  <span>Điểm đặt hàng: {String(row.reorderPoint ?? "Không có dữ liệu")}</span>
+                  <span>Tồn an toàn: {String(row.safetyStock ?? "Không có dữ liệu")}</span>
+                  <span>Lô mua tối ưu: {String(row.economicOrderQty ?? "Không có dữ liệu")}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">Lượng mua đề xuất là mức ưu tiên vận hành theo kế hoạch nhu cầu hiện tại.</p>
         </div>
       )
     }
@@ -228,13 +286,14 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
           <div className="space-y-1">
             {salesData.slice(0, 5).map((item, i) => (
               <div key={i} className="flex items-center justify-between rounded bg-background p-2 text-xs">
-                <span>{String(item.category ?? item.productName ?? item.channel ?? "N/A")}</span>
+                <span>{String(item.category ?? item.productName ?? item.channel ?? "Chưa có")}</span>
                 <span className="font-medium">
-                  {typeof item.revenue === "number" ? formatCurrency(item.revenue) : `${item.percentage ?? "N/A"}%`}
+                  {typeof item.revenue === "number" ? formatCurrency(item.revenue) : `${item.percentage ?? "Chưa có"}%`}
                 </span>
               </div>
             ))}
           </div>
+          {data.sourceNote ? <p className="text-xs text-muted-foreground">{String(data.sourceNote)}</p> : null}
         </div>
       )
     }
@@ -254,11 +313,8 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-medium">Dự báo: {product.name as string}</p>
-              <Badge variant="outline">Danh mục bổ sung</Badge>
+              <Badge variant="outline">Thông tin danh mục</Badge>
             </div>
-            {product.sourceNote ? (
-              <p className="text-xs text-muted-foreground">{String(product.sourceNote)}</p>
-            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="rounded bg-background p-2">
@@ -270,14 +326,28 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
               <span className="font-medium">{forecast.avgDailyDemand as string}</span>
             </div>
             <div className="rounded bg-background p-2">
-              <span className="text-muted-foreground">Tồn kho:</span>{" "}
-              <span className="font-medium">{inv.currentStock as number}</span>
+              <span className="text-muted-foreground">Tồn kho ERP:</span>{" "}
+              <span className="font-medium">Không có trong nguồn</span>
             </div>
             <div className="rounded bg-background p-2">
-              <span className="text-muted-foreground">Đủ cho:</span>{" "}
-              <span className={cn("font-medium", (inv.daysOfStock as number) < 14 && "text-red-600")}>
-                {inv.daysOfStock as number} ngày
-              </span>
+              <span className="text-muted-foreground">Mức phủ dữ liệu:</span>{" "}
+              <span className="font-medium">Không có dữ liệu</span>
+            </div>
+            <div className="rounded bg-background p-2">
+              <span className="text-muted-foreground">Lượng mua đề xuất:</span>{" "}
+              <span className="font-medium">{String(inv.recommendedOrder ?? inv.purchaseQty ?? "Không có dữ liệu")}</span>
+            </div>
+            <div className="rounded bg-background p-2">
+              <span className="text-muted-foreground">Số lượng mua:</span>{" "}
+              <span className="font-medium">{String(inv.purchaseQty ?? 0)}</span>
+            </div>
+            <div className="rounded bg-background p-2">
+              <span className="text-muted-foreground">Điểm đặt hàng / Tồn an toàn:</span>{" "}
+              <span className="font-medium">{String(inv.reorderPoint ?? 0)} / {String(inv.safetyStock ?? "Không có dữ liệu")}</span>
+            </div>
+            <div className="rounded bg-background p-2">
+              <span className="text-muted-foreground">EOQ:</span>{" "}
+              <span className="font-medium">{String(inv.economicOrderQty ?? "Không có dữ liệu")}</span>
             </div>
           </div>
           {drivers ? (
@@ -289,11 +359,11 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <span className="text-muted-foreground">Ngày đỉnh:</span>{" "}
-                  <span className="font-medium">{String(drivers.peakForecastDate ?? "N/A")}</span>
+                  <span className="font-medium">{String(drivers.peakForecastDate ?? "Chưa có")}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">SL đỉnh:</span>{" "}
-                  <span className="font-medium">{String(drivers.peakForecastQty ?? "N/A")}</span>
+                  <span className="font-medium">{String(drivers.peakForecastQty ?? "Chưa có")}</span>
                 </div>
               </div>
               {driverCounts ? (
@@ -330,8 +400,8 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
     // Default: show JSON summary
     return renderToolCard(data,
       <div className="rounded-lg border bg-muted/50 p-3">
-        <p className="text-xs text-muted-foreground">Tool: {toolName}</p>
-        <pre className="mt-1 max-h-40 overflow-auto text-xs">
+        <p className="text-xs text-muted-foreground">Kết quả dữ liệu</p>
+        <pre className="mt-1 max-h-40 max-w-full overflow-auto whitespace-pre-wrap break-words text-xs">
           {JSON.stringify(data, null, 2)}
         </pre>
       </div>
@@ -339,24 +409,24 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
   }
 
   return (
-    <div className={cn("flex h-full flex-col", className)}>
-      <ScrollArea className={cn("flex-1", isWidget ? "p-3" : "p-4")}>
+    <div className={cn("flex h-full min-h-0 flex-col overflow-hidden", className)}>
+      <ScrollArea className={cn("min-h-0 flex-1", isWidget ? "p-3" : "p-4")}>
         {messages.length === 0 ? (
           <div className={cn("flex h-full flex-col items-center justify-center", isWidget ? "space-y-4 py-6" : "space-y-6 py-12")}>
             <div className={cn("flex items-center justify-center rounded-full bg-primary/10", isWidget ? "h-12 w-12" : "h-16 w-16")}>
               <Sparkles className={cn("text-primary", isWidget ? "h-6 w-6" : "h-8 w-8")} />
             </div>
             <div className="text-center">
-              <h3 className={cn("font-semibold", isWidget ? "text-base" : "text-lg")}>Xin chào! Tôi là AnalyticsBot</h3>
+              <h3 className={cn("font-semibold", isWidget ? "text-base" : "text-lg")}>Xin chào! Tôi là Trợ lý phân tích</h3>
               <p className={cn("mt-1 text-muted-foreground", isWidget ? "text-xs" : "text-sm")}>
-                Tôi có thể giúp bạn phân tích dữ liệu tồn kho, doanh số và dự báo nhu cầu.
+                Tôi có thể giúp phân tích rủi ro thiếu hàng, vốn bị khóa, dự báo nhu cầu và kế hoạch mua hàng.
               </p>
             </div>
 
             <div className={cn("w-full space-y-2", isWidget ? "max-w-sm" : "max-w-lg")}>
               <p className="text-center text-sm text-muted-foreground">Thử hỏi:</p>
               <div className="grid gap-2">
-                {SUGGESTED_QUESTIONS.map((q, i) => (
+                {quickQuestions.map((q, i) => (
                   <Button
                     key={i}
                     variant="outline"
@@ -388,7 +458,7 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
 
                 <div
                   className={cn(
-                    "max-w-[80%] space-y-2",
+                    "min-w-0 max-w-[80%] space-y-2",
                     message.role === "user" ? "items-end" : "items-start"
                   )}
                 >
@@ -404,7 +474,7 @@ export function ChatInterface({ variant = "page", className }: ChatInterfaceProp
                               : "bg-muted"
                           )}
                         >
-                          <p className="whitespace-pre-wrap text-sm">{part.text}</p>
+                          <p className="whitespace-pre-wrap break-words text-sm">{part.text}</p>
                         </div>
                       )
                     }

@@ -32,7 +32,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { CATEGORY_LABELS } from "@/lib/project-data"
 import type { DecisionActionType, DecisionPriority, DecisionQueueItem } from "@/types"
 
 interface DecisionQueueTableProps {
@@ -130,28 +129,28 @@ export function DecisionQueueTable({ data, onApprove, onBulkApprove, onViewDetai
     },
     {
       accessorKey: "actionType",
-      header: "Hành động",
+      header: "Khuyến nghị",
       cell: ({ row }) => <Badge variant="outline">{actionLabels[row.original.actionType]}</Badge>,
     },
     {
       accessorKey: "productName",
-      header: sortableHeader("SKU / Sản phẩm"),
+      header: sortableHeader("Mã hàng"),
       cell: ({ row }) => (
         <div className="max-w-[280px]">
           <p className="font-mono text-sm">{row.original.productSku}</p>
           <p className="truncate font-medium">{row.original.productName}</p>
-          <p className="text-xs text-muted-foreground">{CATEGORY_LABELS[row.original.category]}</p>
+          <p className="text-xs text-muted-foreground">Dự báo · chính sách tồn kho · tài chính</p>
         </div>
       ),
     },
     {
       accessorKey: "supplierName",
-      header: sortableHeader("Nhà cung cấp"),
-      cell: ({ row }) => <span className="text-sm">{row.original.supplierName}</span>,
+      header: sortableHeader("Cơ sở"),
+      cell: () => <span className="text-sm">Theo kế hoạch</span>,
     },
     {
       accessorKey: "deadline",
-      header: sortableHeader("Deadline"),
+      header: sortableHeader("Ngày dữ liệu"),
       cell: ({ row }) => <span className="text-sm font-medium">{formatDate(row.original.deadline)}</span>,
     },
     {
@@ -161,7 +160,7 @@ export function DecisionQueueTable({ data, onApprove, onBulkApprove, onViewDetai
     },
     {
       accessorKey: "confidence",
-      header: sortableHeader("Tin cậy"),
+      header: sortableHeader("Điểm ưu tiên"),
       cell: ({ row }) => <span>{row.original.confidence}%</span>,
     },
     {
@@ -220,7 +219,7 @@ export function DecisionQueueTable({ data, onApprove, onBulkApprove, onViewDetai
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Input
-          placeholder="Tìm kiếm theo SKU hoặc tên sản phẩm..."
+          placeholder="Tìm kiếm theo mã hàng hoặc tên sản phẩm..."
           value={(table.getColumn("productName")?.getFilterValue() as string) ?? ""}
           onChange={(event) => table.getColumn("productName")?.setFilterValue(event.target.value)}
           className="max-w-sm"

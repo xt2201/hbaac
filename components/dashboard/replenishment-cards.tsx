@@ -84,7 +84,7 @@ export function ReplenishmentCards({ suggestions, onApprove, onSkip }: Replenish
         const priorityConfig = getPriorityConfig(suggestion.priority)
         const stockPercentage = Math.min(
           100,
-          Math.round((suggestion.currentStock / suggestion.reorderPoint) * 100)
+          Math.round(((suggestion.purchaseQty ?? suggestion.suggestedQty) / Math.max(1, suggestion.reorderPoint)) * 100)
         )
 
         return (
@@ -108,12 +108,12 @@ export function ReplenishmentCards({ suggestions, onApprove, onSkip }: Replenish
             </CardHeader>
 
             <CardContent className="space-y-4">
-              {/* Stock Level */}
+              {/* Inventory policy */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Tồn kho hiện tại</span>
+                  <span className="text-muted-foreground">Điểm đặt hàng / Tồn an toàn</span>
                   <span className="font-medium">
-                    {suggestion.currentStock} / {suggestion.reorderPoint}
+                    {suggestion.reorderPoint} / {suggestion.safetyStock ?? "Không có dữ liệu"}
                   </span>
                 </div>
                 <Progress
@@ -141,16 +141,16 @@ export function ReplenishmentCards({ suggestions, onApprove, onSkip }: Replenish
                 </div>
               </div>
 
-              {/* Supplier & Delivery */}
+              {/* Source */}
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2">
                   <Truck className={cn("h-4 w-4", priorityConfig.iconColor)} />
-                  <span className="text-muted-foreground">{suggestion.supplierName}</span>
+                  <span className="text-muted-foreground">Theo kế hoạch mua</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Clock className={cn("h-4 w-4", priorityConfig.iconColor)} />
                   <span className="text-muted-foreground">
-                    Giao hàng dự kiến: {formatDate(suggestion.expectedDeliveryDate)}
+                    Ưu tiên theo nhu cầu và hiệu quả vốn
                   </span>
                 </div>
               </div>

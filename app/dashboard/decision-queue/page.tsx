@@ -1,6 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useSearchParams } from "next/navigation"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import { CheckCircle2, Clock, ListChecks, ShieldAlert, WalletCards } from "lucide-react"
 import { Header } from "@/components/dashboard/header"
 import { DecisionDetailDrawer } from "@/components/dashboard/decision-detail-drawer"
@@ -14,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CATEGORIES, CATEGORY_LABELS, decisionQueueItems, suppliers } from "@/lib/project-data"
+import { CATEGORIES, CATEGORY_LABELS, decisionQueueItems } from "@/lib/project-data"
 import type { DecisionActionType, DecisionPriority, DecisionQueueItem, ProductCategory } from "@/types"
 
 type FilterValue<T extends string> = T | "all"
@@ -33,6 +34,18 @@ const priorityLabels: Record<DecisionPriority, string> = {
   low: "Thấp",
 }
 
+const APPROVED_DECISION_STORAGE_KEY = "hbaac-approved-decision-ids"
+
+function readApprovedDecisionIds() {
+  if (typeof window === "undefined") return new Set<string>()
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(APPROVED_DECISION_STORAGE_KEY) ?? "[]")
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [])
+  } catch {
+    return new Set<string>()
+  }
+}
+
 function formatCurrency(value: number) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B VND`
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M VND`
@@ -43,24 +56,34 @@ function formatCurrency(value: number) {
   }).format(value)
 }
 
-export default function DecisionQueuePage() {
+function DecisionQueuePageContent() {
+  const searchParams = useSearchParams()
+  const focusedProductId = searchParams.get("productId")
   const [selectedActionType, setSelectedActionType] = useState<FilterValue<DecisionActionType>>("all")
   const [selectedCategory, setSelectedCategory] = useState<FilterValue<ProductCategory>>("all")
-  const [selectedSupplier, setSelectedSupplier] = useState("all")
   const [selectedPriority, setSelectedPriority] = useState<FilterValue<DecisionPriority>>("all")
-  const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set())
+  const [approvedIds, setApprovedIds] = useState<Set<string>>(() => readApprovedDecisionIds())
   const [selectedItem, setSelectedItem] = useState<DecisionQueueItem | null>(null)
 
+  useEffect(() => {
+    window.localStorage.setItem(APPROVED_DECISION_STORAGE_KEY, JSON.stringify([...approvedIds]))
+  }, [approvedIds])
+
   const filteredItems = useMemo(() => {
-    return decisionQueueItems.filter((item) => {
-      if (approvedIds.has(item.id)) return false
-      if (selectedActionType !== "all" && item.actionType !== selectedActionType) return false
-      if (selectedCategory !== "all" && item.category !== selectedCategory) return false
-      if (selectedSupplier !== "all" && item.supplierId !== selectedSupplier) return false
-      if (selectedPriority !== "all" && item.priority !== selectedPriority) return false
-      return true
-    })
-  }, [approvedIds, selectedActionType, selectedCategory, selectedPriority, selectedSupplier])
+    return decisionQueueItems
+      .filter((item) => {
+        if (approvedIds.has(item.id)) return false
+        if (selectedActionType !== "all" && item.actionType !== selectedActionType) return false
+        if (selectedCategory !== "all" && item.category !== selectedCategory) return false
+        if (selectedPriority !== "all" && item.priority !== selectedPriority) return false
+        return true
+      })
+      .sort((a, b) => {
+        if (a.productId === focusedProductId) return -1
+        if (b.productId === focusedProductId) return 1
+        return 0
+      })
+  }, [approvedIds, selectedActionType, selectedCategory, selectedPriority, focusedProductId])
 
   const summary = useMemo(() => {
     const active = decisionQueueItems.filter((item) => !approvedIds.has(item.id))
@@ -92,7 +115,7 @@ export default function DecisionQueuePage() {
     <div className="flex flex-col">
       <Header
         title="Hàng chờ quyết định"
-        description="Ưu tiên hành động theo tác động tài chính, deadline và mức tin cậy của khuyến nghị"
+        description="Ưu tiên hành động theo tác động tài chính, hạn xử lý và điểm ưu tiên dữ liệu"
       />
 
       <div className="flex-1 space-y-6 p-6">
@@ -104,7 +127,7 @@ export default function DecisionQueuePage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{summary.activeCount}</div>
-              <p className="text-xs text-muted-foreground">đã sort theo tác động tài chính</p>
+              <p className="text-xs text-muted-foreground">đã sắp xếp theo tác động tài chính</p>
             </CardContent>
           </Card>
 
@@ -149,14 +172,14 @@ export default function DecisionQueuePage() {
           <CardHeader>
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
-                <CardTitle>Decision Queue</CardTitle>
+                <CardTitle>Hàng chờ quyết định</CardTitle>
                 <CardDescription>
-                  {filteredItems.length} hành động phù hợp bộ lọc. Dữ liệu bán hàng/dự báo là dữ liệu cuộc thi; danh mục, nhà cung cấp và tồn kho là danh mục bổ sung.
+                  {filteredItems.length} hành động phù hợp bộ lọc. Dữ liệu vận hành đã được đồng bộ để ưu tiên quyết định mua hàng.
                 </CardDescription>
                 {summary.nextDeadline && (
                   <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
                     <Clock className="h-4 w-4" />
-                    Deadline gần nhất: {new Intl.DateTimeFormat("vi-VN").format(summary.nextDeadline)}
+                    Hạn xử lý gần nhất: {new Intl.DateTimeFormat("vi-VN").format(summary.nextDeadline)}
                   </div>
                 )}
               </div>
@@ -196,18 +219,6 @@ export default function DecisionQueuePage() {
                     ))}
                   </SelectContent>
                 </Select>
-
-                <Select value={selectedSupplier} onValueChange={setSelectedSupplier}>
-                  <SelectTrigger className="w-[190px]">
-                    <SelectValue placeholder="Nhà cung cấp" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Tất cả nhà cung cấp</SelectItem>
-                    {suppliers.map((supplier) => (
-                      <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
             </div>
           </CardHeader>
@@ -229,5 +240,13 @@ export default function DecisionQueuePage() {
         onApprove={handleApprove}
       />
     </div>
+  )
+}
+
+export default function DecisionQueuePage() {
+  return (
+    <Suspense fallback={null}>
+      <DecisionQueuePageContent />
+    </Suspense>
   )
 }

@@ -17,6 +17,7 @@ export interface Product {
 }
 
 export type ProductCategory =
+  | "SourceData"
   | "Brake"
   | "Engine"
   | "Suspension"
@@ -35,6 +36,8 @@ export interface Supplier {
   contactEmail: string
 }
 
+export type InventoryPolicySource = "inventory_plan" | "fallback"
+
 export interface InventoryLevel {
   productId: string
   warehouseId: string
@@ -43,6 +46,13 @@ export interface InventoryLevel {
   availableQty: number
   reorderPoint: number
   safetyStock: number
+  targetStock?: number
+  demand28?: number
+  economicOrderQty?: number
+  recommendedOrderTarget?: number
+  inventoryPolicyMonth?: 1 | 2
+  inventoryPolicySource: InventoryPolicySource
+  inventoryPolicyNote?: string
   lastUpdated: Date
 }
 
@@ -95,6 +105,22 @@ export interface ReplenishmentSuggestion {
   supplierName: string
   currentStock: number
   reorderPoint: number
+  purchaseQty?: number
+  demand28?: number
+  economicOrderQty?: number
+  recommendedOrderTarget?: number
+  targetStock?: number
+  safetyStock?: number
+  unitCost?: number
+  leadTimeDays?: number
+  minOrderQty?: number
+  cycleTimeDays?: number | null
+  grossMarginPerUnit?: number
+  expectedProfitSaved?: number
+  roi?: number
+  inventoryPolicyMonth?: 1 | 2
+  inventoryPolicySource: InventoryPolicySource
+  inventoryPolicyNote?: string
 }
 
 export type DecisionActionType = "order" | "reduce" | "clearance" | "watch"
@@ -123,6 +149,14 @@ export interface DecisionQueueItem {
   projectedDays: number
   suggestedQty?: number
   estimatedCost?: number
+  demand28?: number
+  economicOrderQty?: number
+  recommendedOrderTarget?: number
+  targetStock?: number
+  safetyStock?: number
+  inventoryPolicyMonth?: 1 | 2
+  inventoryPolicySource?: InventoryPolicySource
+  inventoryPolicyNote?: string
 }
 
 export interface PurchaseOrder {

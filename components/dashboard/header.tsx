@@ -53,21 +53,21 @@ export function Header({ title, description }: HeaderProps) {
             <DropdownMenuLabel>Thông báo</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="flex flex-col items-start gap-1">
-              <span className="font-medium text-destructive">Cảnh báo hết hàng</span>
+              <span className="font-medium text-destructive">Nhu cầu cần xử lý</span>
               <span className="text-xs text-muted-foreground">
-                Má phanh Toyota - còn 3 ngày tồn kho
+                Mã hàng có lượng mua đề xuất cao
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="flex flex-col items-start gap-1">
-              <span className="font-medium text-amber-600">Tồn kho cao</span>
+              <span className="font-medium text-amber-600">Chi phí lưu kho cao</span>
               <span className="text-xs text-muted-foreground">
-                Lọc gió Honda - dư 180 ngày tồn kho
+                Tồn an toàn cần rà soát
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="flex flex-col items-start gap-1">
-              <span className="font-medium">Đơn hàng mới</span>
+              <span className="font-medium">Cơ sở vận hành</span>
               <span className="text-xs text-muted-foreground">
-                PO #2024-0156 đã được xác nhận
+                Dữ liệu bán hàng, dự báo và chính sách tồn kho
               </span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />

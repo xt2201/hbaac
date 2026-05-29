@@ -1,4 +1,4 @@
-// AutoParts Intelligence Platform - AI Tools for AnalyticsBot
+// Công cụ dữ liệu cho Trợ lý phân tích
 
 import { tool } from "ai"
 import { z } from "zod"
@@ -18,6 +18,15 @@ import {
   getCategorySalesSummary,
   getTopSellingProducts,
   getInventoryByProduct,
+  getInventoryPoliciesBySku,
+  getInventoryPolicyByProduct,
+  getInventoryPolicyBySkuMonth,
+  getInventoryOptimizationSummary,
+  inventoryOptimizationPolicies,
+  getDecisionQueueItems,
+  getProfitCommandCenter,
+  HBAAC_DATASET_INFO,
+  HBAAC_CALENDAR_SUMMARY,
   CATEGORY_LABELS,
   DATA_LAYER_LABELS,
 } from "@/lib/project-data"
@@ -34,9 +43,6 @@ function withFallback<T extends object>(result: AnalyticsBackendResult<T>, fallb
     ...fallback(),
     _meta: {
       source: "local_dataset" as const,
-      warning: shouldUseLocalDatasetFallback()
-        ? `${result.error.message} Dang dung du lieu cuoc thi tu train.csv va submission_nbeats.csv.`
-        : "Chatbot dang dung du lieu cuoc thi cuc bo vi chua cau hinh backend analytics rieng.",
     },
   }
 }
@@ -62,8 +68,8 @@ function localProductForecast(productIdOrSku: string, days: number) {
   const totalForecast = forecasts.reduce((sum, f) => sum + f.forecastQty, 0)
   const avgDaily = totalForecast / Math.max(1, forecasts.length)
   const totalRecentSales = recentSales.reduce((sum, s) => sum + s.quantity, 0)
-  const currentStock = inv?.availableQty || 0
-  const daysOfStock = avgDaily > 0 ? Math.round(currentStock / avgDaily) : 999
+  const policy = getInventoryPolicyByProduct(product.id)
+  const purchaseQty = policy ? Math.max(0, Math.ceil(policy.recommendedOrderTarget)) : 0
 
   return {
     product: {
@@ -72,14 +78,14 @@ function localProductForecast(productIdOrSku: string, days: number) {
       name: product.name,
       category: CATEGORY_LABELS[product.category],
       brand: product.brand,
-      catalogSource: "danh_muc_bo_sung",
-      sourceNote: DATA_LAYER_LABELS.catalog,
+      catalogSource: "Không có master catalog trong 3 file nguồn",
+      sourceNote: "Product identity là SKU; category/brand/supplier/current stock/MOQ không có trong nguồn.",
     },
     forecast: {
       days,
       totalForecastQty: Math.round(totalForecast),
       avgDailyDemand: avgDaily.toFixed(1),
-      method: forecasts[0]?.method || "ml_ensemble",
+      method: forecasts[0]?.method || "Mô hình dự báo nhu cầu",
     },
     drivers: {
       windowStartDate: driverSummary.windowStartDate,
@@ -113,16 +119,31 @@ function localProductForecast(productIdOrSku: string, days: number) {
       })),
     },
     inventory: {
-      currentStock,
+      currentStock: null,
       reorderPoint: inv?.reorderPoint || 0,
-      daysOfStock,
-      status: daysOfStock < 7 ? "low" : daysOfStock > 90 ? "high" : "normal",
+      daysOfStock: null,
+      status: "source_policy",
+      recommendedOrder: policy?.recommendedOrderTarget,
+      purchaseQty,
+      demand28: policy?.demand28,
+      economicOrderQty: policy?.economicOrderQty,
+      safetyStock: policy?.safetyStock ?? inv?.safetyStock,
+      leadTimeDays: null,
+      minOrderQty: null,
+      cycleTimeDays: policy?.cycleTimeDays,
+      policySource: policy ? "inventory_plan" : "fallback",
+      policyNote: policy?.inventoryPolicyNote ?? DATA_LAYER_LABELS.catalog,
     },
     recentSales: {
       last28Days: totalRecentSales,
       avgDaily: (totalRecentSales / 28).toFixed(1),
     },
-    dataLineage: DATA_LAYER_LABELS,
+    dataLineage: {
+      sales: DATA_LAYER_LABELS.competition,
+      calendar: DATA_LAYER_LABELS.calendar,
+      catalog: DATA_LAYER_LABELS.catalog,
+      inventoryPolicy: DATA_LAYER_LABELS.inventoryPolicy,
+    },
   }
 }
 
@@ -196,12 +217,105 @@ function localReplenishmentSuggestions(priority: string, category: string | unde
       category: CATEGORY_LABELS[s.category],
       priority: s.priority === "urgent" ? "Khẩn cấp" : s.priority === "high" ? "Cao" : s.priority === "medium" ? "Trung bình" : "Thấp",
       suggestedQty: s.suggestedQty,
+      purchaseQty: s.purchaseQty ?? s.suggestedQty,
       estimatedCost: s.estimatedCost,
-      currentStock: s.currentStock,
+      currentStock: null,
       reorderPoint: s.reorderPoint,
-      supplierName: s.supplierName,
+      recommendedOrder: s.recommendedOrderTarget ?? s.suggestedQty,
+      demand28: s.demand28,
+      economicOrderQty: s.economicOrderQty,
+      safetyStock: s.safetyStock,
+      leadTimeDays: null,
+      minOrderQty: null,
+      cycleTimeDays: s.cycleTimeDays,
+      grossMarginPerUnit: s.grossMarginPerUnit,
+      expectedProfitSaved: s.expectedProfitSaved,
+      roi: s.roi,
+      policySource: s.inventoryPolicySource,
+      supplierName: "Nhà cung ứng ưu tiên",
       reason: s.reason,
+      sourceNote: "Dựa trên dữ liệu bán hàng, dự báo nhu cầu và chính sách tồn kho; nguồn hiện tại chưa có ERP stock/MOQ/supplier thật.",
     })),
+  }
+}
+
+function localInventoryPolicy(productIdOrSku: string | undefined, month: 1 | 2, view: string, limit: number) {
+  const summaries = [getInventoryOptimizationSummary(1), getInventoryOptimizationSummary(2)]
+  const fieldExplanations = {
+    EOQ: "Economic Order Quantity: lot size kinh tế từ demand và chi phí đặt/tồn kho.",
+    ROP: "Reorder Point: ngưỡng đặt hàng lại theo chính sách tồn kho.",
+    safetyStock: "Tồn kho an toàn để buffer biến động demand.",
+    recommendedOrder: "Recommended_Order là số lượng đề xuất theo chính sách tồn kho.",
+    purchaseQty: "Purchase Qty trong demo nguồn-dữ-liệu này bằng Recommended_Order vì chưa có ERP stock feed.",
+    month1Month2: "Month 1 là 28 ngày forecast đầu; Month 2 là 28 ngày forecast kế tiếp.",
+  }
+
+  const policyRow = (policy: (typeof inventoryOptimizationPolicies)[number]) => {
+    const product = products.find((item) => item.sku.toLowerCase() === policy.sku.toLowerCase())
+    const inv = product ? getInventoryByProduct(product.id) : null
+    const suggestion = product ? replenishmentSuggestions.find((item) => item.productId === product.id) : undefined
+    const purchaseQty = suggestion?.purchaseQty ?? Math.max(0, Math.ceil(policy.recommendedOrderTarget))
+    const unitCost = suggestion?.unitCost ?? policy.unitCost
+    return {
+      productId: product?.id,
+      productSku: policy.sku,
+      productName: product?.name ?? policy.sku,
+      category: product ? CATEGORY_LABELS[product.category] : "Chưa có",
+      month: policy.month,
+      demand28: policy.demand28,
+      avgDailyDemand: policy.meanDaily,
+      economicOrderQty: policy.economicOrderQty,
+      safetyStock: policy.safetyStock,
+      reorderPoint: policy.reorderPoint,
+      recommendedOrder: policy.recommendedOrderTarget,
+      currentStock: null,
+      purchaseQty,
+      unitCost,
+      estimatedCost: Math.round(purchaseQty * unitCost),
+      cycleTimeDays: policy.cycleTimeDays,
+      totalAnnualCost: policy.totalAnnualCost,
+      policySource: policy.inventoryPolicySource,
+      sourceNote: "Nguồn hiện tại chưa có ERP stock/supplier/MOQ thật; chính sách tồn kho được tính từ dự báo nhu cầu.",
+    }
+  }
+
+  if (productIdOrSku) {
+    const product = products.find((item) => item.id === productIdOrSku || item.sku.toLowerCase() === productIdOrSku.toLowerCase()) ?? searchProducts(productIdOrSku)[0]
+    const policy = product ? getInventoryPolicyByProduct(product.id, month) : getInventoryPolicyBySkuMonth(productIdOrSku, month)
+    if (!policy) {
+      return {
+        error: `Chưa có inventory policy cho ${productIdOrSku}. Dashboard đang dùng fallback rule.`,
+        summaries,
+        fieldExplanations,
+        source: DATA_LAYER_LABELS.inventoryPolicy,
+      }
+    }
+    return {
+      mode: "sku",
+      policy: policyRow(policy),
+      allMonths: getInventoryPoliciesBySku(policy.sku).map(policyRow),
+      summaries,
+      fieldExplanations,
+      source: DATA_LAYER_LABELS.inventoryPolicy,
+    }
+  }
+
+  const rows = inventoryOptimizationPolicies
+    .filter((policy) => policy.month === month)
+    .map(policyRow)
+
+  const ranked = [...rows].sort((left, right) => {
+    if (view === "top_cost") return right.totalAnnualCost - left.totalAnnualCost
+    return right.purchaseQty - left.purchaseQty || right.totalAnnualCost - left.totalAnnualCost
+  }).slice(0, limit)
+
+  return {
+    mode: view,
+    month,
+    summaries,
+    rows: ranked,
+    fieldExplanations,
+    source: DATA_LAYER_LABELS.inventoryPolicy,
   }
 }
 
@@ -227,7 +341,7 @@ function localSalesAnalytics(groupBy: string, days: number, limit: number) {
       data: topProducts.map((p) => ({
         productSku: p.productSku,
         productName: p.productName,
-        category: p.category ? CATEGORY_LABELS[p.category] : "N/A",
+        category: p.category ? CATEGORY_LABELS[p.category] : "Chưa có",
         revenue: p.revenue,
         quantity: p.quantity,
       })),
@@ -235,16 +349,19 @@ function localSalesAnalytics(groupBy: string, days: number, limit: number) {
     }
   }
 
-  const kpis = getLocalDashboardKPIs()
+  const topProducts = getTopSellingProducts(days, limit)
   return {
     period: `${days} ngày gần nhất`,
-    groupBy: "Kênh bán hàng",
-    data: [
-      { channel: "Bán lẻ (Retail)", percentage: 45, revenue: kpis.monthlyRevenue * 0.45 },
-      { channel: "Bán buôn (Wholesale)", percentage: 35, revenue: kpis.monthlyRevenue * 0.35 },
-      { channel: "Online", percentage: 20, revenue: kpis.monthlyRevenue * 0.2 },
-    ],
-    totalRevenue: kpis.monthlyRevenue,
+    groupBy: "Sản phẩm bán chạy",
+    data: topProducts.map((p) => ({
+      productSku: p.productSku,
+      productName: p.productName,
+      category: p.category ? CATEGORY_LABELS[p.category] : "Chưa có",
+      revenue: p.revenue,
+      quantity: p.quantity,
+    })),
+    totalRevenue: topProducts.reduce((sum, p) => sum + p.revenue, 0),
+    sourceNote: "Theo dữ liệu bán hàng; nguồn hiện tại không có kênh bán hàng thật.",
   }
 }
 
@@ -270,6 +387,8 @@ function localInventorySummary(category?: string) {
   const lowStock = filteredInventory.filter((i) => i.availableQty < i.reorderPoint).length
   const overstock = filteredInventory.filter((i) => i.availableQty > i.reorderPoint * 3).length
 
+  const policySummary = getInventoryOptimizationSummary(1)
+
   return {
     category: category ? category : "Tất cả danh mục",
     totalSKUs: filteredProducts.length,
@@ -278,6 +397,23 @@ function localInventorySummary(category?: string) {
     lowStockCount: lowStock,
     overstockCount: overstock,
     healthStatus: lowStock > 10 ? "Cần chú ý - nhiều sản phẩm sắp hết hàng" : overstock > 20 ? "Cần tối ưu - nhiều sản phẩm tồn kho quá mức" : "Tốt",
+    policySummary: {
+      month: policySummary.month,
+      skuCount: policySummary.skuCount,
+      demand28: policySummary.totalDemand28,
+      targetStock: policySummary.totalRecommendedOrderTarget,
+      safetyStock: policySummary.totalSafetyStock,
+      annualizedCost: policySummary.totalAnnualCost,
+      averageCycleTimeDays: policySummary.averageCycleTimeDays,
+      source: DATA_LAYER_LABELS.inventoryPolicy,
+    },
+    fieldExplanations: {
+      EOQ: "Economic Order Quantity: lot size kinh tế từ demand và chi phí đặt/tồn kho.",
+      ROP: "Reorder Point: ngưỡng đặt hàng lại theo chính sách tồn kho.",
+      safetyStock: "Tồn kho an toàn để buffer biến động demand.",
+      targetStock: "Tồn kho mục tiêu từ optimizer; không phải số lượng cần mua trực tiếp.",
+      purchaseQty: "SL cần mua trong demo nguồn-dữ-liệu này bằng Recommended_Order vì chưa có ERP stock feed.",
+    },
   }
 }
 
@@ -334,6 +470,156 @@ function localDashboardKPIs() {
     pendingActions: {
       replenishmentSuggestions: kpis.pendingOrders,
     },
+  }
+}
+
+function expectedProfitSaved(suggestion: (typeof replenishmentSuggestions)[number]) {
+  const product = products.find((p) => p.id === suggestion.productId)
+  const inv = getInventoryByProduct(suggestion.productId)
+  const forecasts = getForecastsByProduct(suggestion.productId, 56)
+  const totalForecast = forecasts.reduce((sum, forecast) => sum + forecast.forecastQty, 0)
+  const margin = Math.max(1, (product?.unitPrice ?? 0) - (product?.unitCost ?? 0))
+  const protectedQty = Math.min(suggestion.suggestedQty, Math.max(0, Math.ceil(totalForecast - (inv?.availableQty ?? suggestion.currentStock))))
+
+  return Math.round(protectedQty * margin)
+}
+
+function localDecisionQueue(limit: number, priority: string, productIdOrSku?: string) {
+  let items = getDecisionQueueItems()
+
+  if (priority !== "all") items = items.filter((item) => item.priority === priority)
+  if (productIdOrSku) {
+    const query = productIdOrSku.toLowerCase()
+    items = items.filter(
+      (item) => item.productId === productIdOrSku || item.productSku.toLowerCase() === query || item.productName.toLowerCase().includes(query)
+    )
+  }
+
+  const rows = items
+    .slice(0, limit)
+    .map((item) => ({
+      id: item.id,
+      productId: item.productId,
+      productSku: item.productSku,
+      productName: item.productName,
+      actionType: item.actionType,
+      priority: item.priority,
+      urgency: item.urgency,
+      deadline: item.deadline.toISOString().slice(0, 10),
+      estimatedFinancialImpact: item.estimatedFinancialImpact,
+      recommendation: item.recommendation,
+      confidence: item.confidence,
+      currentStock: item.currentStock,
+      projectedDays: item.projectedDays,
+      suggestedQty: item.suggestedQty,
+      purchaseQty: item.suggestedQty,
+      estimatedCost: item.estimatedCost,
+      targetStock: item.targetStock,
+      safetyStock: item.safetyStock,
+      policySource: item.inventoryPolicySource,
+      sourceDetail: item.dataSource,
+      calculationBasis: item.assumptions,
+    }))
+
+  return {
+    summary: {
+      total: items.length,
+      urgent: items.filter((item) => item.priority === "urgent").length,
+      high: items.filter((item) => item.priority === "high").length,
+      totalFinancialImpact: items.reduce((sum, item) => sum + item.estimatedFinancialImpact, 0),
+    },
+    decisions: rows,
+  }
+}
+
+function localBudgetSimulation(budgetVnd: number | null, limit: number) {
+  const enriched = replenishmentSuggestions
+    .map((suggestion) => ({
+      ...suggestion,
+      expectedProfitSaved: expectedProfitSaved(suggestion),
+      roi: suggestion.estimatedCost > 0 ? expectedProfitSaved(suggestion) / suggestion.estimatedCost : 0,
+    }))
+    .sort((left, right) => right.roi - left.roi)
+
+  let remaining = budgetVnd ?? Number.POSITIVE_INFINITY
+  const selected = [] as typeof enriched
+  const excluded = [] as typeof enriched
+
+  for (const suggestion of enriched) {
+    if (suggestion.estimatedCost <= remaining) {
+      selected.push(suggestion)
+      remaining -= suggestion.estimatedCost
+    } else {
+      excluded.push(suggestion)
+    }
+  }
+
+  const selectedCost = selected.reduce((sum, item) => sum + item.estimatedCost, 0)
+  const protectedProfit = selected.reduce((sum, item) => sum + item.expectedProfitSaved, 0)
+  const excludedProfitRisk = excluded.reduce((sum, item) => sum + item.expectedProfitSaved, 0)
+
+  return {
+    method: "Mô phỏng ưu tiên hiệu quả vốn",
+    budgetVnd,
+    summary: {
+      selectedSkuCount: selected.length,
+      selectedCost,
+      protectedProfit,
+      remainingBudget: budgetVnd === null ? null : Math.max(0, budgetVnd - selectedCost),
+      excludedSkuCount: excluded.length,
+      excludedProfitRisk,
+    },
+    selected: selected.slice(0, limit).map((item) => ({
+      productSku: item.productSku,
+      productName: item.productName,
+      priority: item.priority,
+      suggestedQty: item.suggestedQty,
+      purchaseQty: item.purchaseQty ?? item.suggestedQty,
+      estimatedCost: item.estimatedCost,
+      targetStock: item.targetStock,
+      policySource: item.inventoryPolicySource,
+      protectedProfit: item.expectedProfitSaved,
+      roiPct: Math.round(item.roi * 100),
+    })),
+    excluded: excluded.slice(0, 3).map((item) => ({
+      productSku: item.productSku,
+      productName: item.productName,
+      estimatedCost: item.estimatedCost,
+      profitLeftAtRisk: item.expectedProfitSaved,
+    })),
+  }
+}
+
+function localModelHealth() {
+  return {
+    status: "Ổn định, cần theo dõi định kỳ",
+    caveat: "Các chỉ số hiện tại dùng để theo dõi độ ổn định và cần rà soát thêm khi vận hành thực tế biến động mạnh.",
+    metrics: {
+      forecastCoverage: `${products.length} SKU`,
+      forecastMethod: "Mô hình dự báo nhu cầu",
+      stockoutAlerts: stockAlerts.filter((alert) => alert.type === "stockout_risk").length,
+      sparseSkuRisk: "Theo dõi trên trang độ tin cậy dự báo",
+      calendarRows: HBAAC_CALENDAR_SUMMARY.rowCount,
+      dataThrough: HBAAC_DATASET_INFO.maxTrainDate,
+    },
+    dataLineage: {
+      sales: DATA_LAYER_LABELS.competition,
+      calendar: DATA_LAYER_LABELS.calendar,
+      catalog: DATA_LAYER_LABELS.catalog,
+      inventoryPolicy: DATA_LAYER_LABELS.inventoryPolicy,
+    },
+  }
+}
+
+function localImplementationRoadmap() {
+  return {
+    phases: [
+      { phase: "Thử nghiệm POC", duration: "4-6 tuần", scope: "1-2 danh mục, 500-1.000 SKU", goal: "thiết lập mức tham chiếu dự báo và độ chính xác cảnh báo" },
+      { phase: "Thí điểm vận hành", duration: "8-12 tuần", scope: "3-5 danh mục, quy trình nhà cung cấp, cập nhật dự báo hằng tuần", goal: "giảm thiếu hàng và chi phí lưu kho" },
+      { phase: "Triển khai toàn hệ thống", duration: "3-6 tháng", scope: "toàn bộ SKU, tích hợp ERP/WMS, giám sát vận hành", goal: "giảm vốn bị khóa và rút ngắn thời gian lập kế hoạch mua hàng" },
+    ],
+    risks: ["Thiếu dữ liệu tồn kho hoặc thời gian cung ứng", "Hoàn trả làm nhiễu nhu cầu", "Mã hàng ít dữ liệu hoặc mới phát sinh", "Tích hợp ERP chậm tiến độ"],
+    calculationBasis: "Chi phí, nguồn lực và phạm vi tích hợp là cơ sở tính toán cho kế hoạch triển khai.",
   }
 }
 
@@ -400,6 +686,17 @@ export const getInventorySummaryTool = tool({
   ),
 })
 
+export const getInventoryPolicyTool = tool({
+  description: "Lấy chính sách tồn kho EOQ theo SKU hoặc tổng quan: demand 28 ngày, EOQ, safety stock, reorder point, target stock, purchase qty và chi phí annualized.",
+  inputSchema: z.object({
+    productIdOrSku: z.string().optional().describe("ID hoặc SKU cần xem chính sách tồn kho"),
+    month: z.union([z.literal(1), z.literal(2)]).default(1).describe("Kỳ forecast 28 ngày: 1 là kỳ hiện tại, 2 là kỳ kế tiếp"),
+    view: z.enum(["summary", "sku", "top_purchase_qty", "top_cost"]).default("summary"),
+    limit: z.number().default(10),
+  }),
+  execute: async ({ productIdOrSku, month, view, limit }) => localInventoryPolicy(productIdOrSku, month, view, limit),
+})
+
 export const compareProductsTool = tool({
   description: "So sánh nhiều sản phẩm với nhau. Sử dụng khi người dùng muốn so sánh doanh số, tồn kho giữa các sản phẩm hoặc thương hiệu.",
   inputSchema: z.object({
@@ -421,12 +718,67 @@ export const getDashboardKPIsTool = tool({
   ),
 })
 
+export const getDecisionQueueTool = tool({
+  description: "Lấy hàng chờ quyết định ưu tiên theo tác động tài chính, hạn xử lý, độ tin cậy và khuyến nghị hành động.",
+  inputSchema: z.object({
+    priority: z.enum(["urgent", "high", "medium", "low", "all"]).default("all"),
+    productIdOrSku: z.string().optional().describe("ID, SKU hoặc tên sản phẩm cần giải thích"),
+    limit: z.number().default(10),
+  }),
+  execute: async ({ priority, productIdOrSku, limit }) => localDecisionQueue(limit, priority, productIdOrSku),
+})
+
+export const optimizeReplenishmentBudgetTool = tool({
+  description: "Mô phỏng ngân sách mua hàng theo hiệu quả vốn để chọn SKU nên ưu tiên đặt hàng.",
+  inputSchema: z.object({
+    budgetVnd: z.number().nullable().default(null).describe("Ngân sách VND; null nghĩa là không giới hạn, 0 nghĩa là không chi"),
+    limit: z.number().default(10),
+  }),
+  execute: async ({ budgetVnd, limit }) => localBudgetSimulation(budgetVnd, limit),
+})
+
+export const explainRecommendationTool = tool({
+  description: "Giải thích một khuyến nghị cho SKU theo dự báo nhu cầu, tồn kho, tác động tài chính, nguồn dữ liệu và cơ sở tính toán.",
+  inputSchema: z.object({
+    productIdOrSku: z.string().describe("ID, SKU hoặc tên sản phẩm cần giải thích"),
+  }),
+  execute: async ({ productIdOrSku }) => {
+    const queue = localDecisionQueue(1, "all", productIdOrSku)
+    const decision = queue.decisions[0]
+    if (!decision) return { error: `Không tìm thấy khuyến nghị cho ${productIdOrSku}` }
+
+    return {
+      decision,
+      forecast: localProductForecast(decision.productId, 28),
+      replenishment: localReplenishmentSuggestions("all", undefined, 50).suggestions.find((item) => item.productSku === decision.productSku),
+    }
+  },
+})
+
+export const getModelHealthTool = tool({
+  description: "Lấy tình trạng độ tin cậy dự báo: độ phủ, mức ổn định, biến động nhu cầu, mã hàng ít dữ liệu, hoàn trả và nguồn dữ liệu vận hành.",
+  inputSchema: z.object({}),
+  execute: async () => localModelHealth(),
+})
+
+export const getImplementationRoadmapTool = tool({
+  description: "Lấy lộ trình triển khai POC, thí điểm, triển khai toàn hệ thống kèm KPI, rủi ro và cơ sở tính toán.",
+  inputSchema: z.object({}),
+  execute: async () => localImplementationRoadmap(),
+})
+
 export const analyticsTools = {
   getProductForecast: getProductForecastTool,
   getStockAlerts: getStockAlertsTool,
   getReplenishmentSuggestions: getReplenishmentSuggestionsTool,
   getSalesAnalytics: getSalesAnalyticsTool,
   getInventorySummary: getInventorySummaryTool,
+  getInventoryPolicy: getInventoryPolicyTool,
   compareProducts: compareProductsTool,
   getDashboardKPIs: getDashboardKPIsTool,
+  getDecisionQueue: getDecisionQueueTool,
+  optimizeReplenishmentBudget: optimizeReplenishmentBudgetTool,
+  explainRecommendation: explainRecommendationTool,
+  getModelHealth: getModelHealthTool,
+  getImplementationRoadmap: getImplementationRoadmapTool,
 }

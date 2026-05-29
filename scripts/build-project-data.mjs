@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const trainPath = path.join(rootDir, "train.csv")
 const forecastPath = path.join(rootDir, "submission_nbeats.csv")
+const inventoryPlanPath = path.join(rootDir, "inventory_plan.csv")
 const calendarPath = path.join(rootDir, "data", "external_calendar.csv")
 const outputDir = path.join(rootDir, "lib", "project-data", "generated")
 
@@ -206,6 +207,221 @@ function loadForecastData() {
     rowCount: lines.length - 1,
     skuCount: forecastBySku.size,
     forecastBySku,
+  }
+}
+
+
+function loadInventoryPlanData(forecastData) {
+  if (!fs.existsSync(inventoryPlanPath)) {
+    console.warn(`Inventory plan: missing ${path.relative(rootDir, inventoryPlanPath)}; generated empty policy dataset.`)
+    return {
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        source: "inventory_plan.csv",
+        forecastSource: "submission_nbeats.csv",
+        horizonDays: FORECAST_DAYS_PER_SPLIT,
+        months: [1, 2],
+        rows: 0,
+        skuCount: 0,
+        duplicateKeys: 0,
+        forecastMismatchRows: 0,
+        fields: [],
+        summaries: [],
+      },
+      rows: [],
+    }
+  }
+
+  const lines = readLines(inventoryPlanPath)
+  const indexes = headerIndexes(parseCsvLine(lines[0]))
+  const columns = {
+    sku: requireColumn(indexes, "sku", inventoryPlanPath),
+    month: requireColumn(indexes, "month", inventoryPlanPath),
+    unitCost: requireColumn(indexes, "unit_cost", inventoryPlanPath),
+    stdDaily: requireColumn(indexes, "std_daily", inventoryPlanPath),
+    demand28: requireColumn(indexes, "D_month", inventoryPlanPath),
+    meanDaily: requireColumn(indexes, "mean_daily", inventoryPlanPath),
+    annualizedDemand: requireColumn(indexes, "D_annual_equiv", inventoryPlanPath),
+    economicOrderQty: requireColumn(indexes, "EOQ", inventoryPlanPath),
+    recommendedOrderTarget: requireColumn(indexes, "Recommended_Order", inventoryPlanPath),
+    safetyStock: requireColumn(indexes, "Safety_Stock", inventoryPlanPath),
+    reorderPoint: requireColumn(indexes, "Reorder_Point", inventoryPlanPath),
+    cycleTimeDays: requireColumn(indexes, "Cycle_Time_days", inventoryPlanPath),
+    annualOrderCost: requireColumn(indexes, "Annual_Order_Cost", inventoryPlanPath),
+    annualHoldingCost: requireColumn(indexes, "Annual_Holding_Cost", inventoryPlanPath),
+    annualPurchaseCost: requireColumn(indexes, "Annual_Purchase_Cost", inventoryPlanPath),
+    totalAnnualCost: requireColumn(indexes, "Total_Annual_Cost", inventoryPlanPath),
+  }
+
+  const rows = []
+  const seenKeys = new Set()
+  const skuSet = new Set()
+  const skuMonths = new Map()
+  const summaryByMonth = new Map()
+  const duplicateKeys = []
+  const invalidRows = []
+  const mismatchRows = []
+  const requiredNumericColumns = [
+    ["unitCost", columns.unitCost, "unit_cost"],
+    ["stdDaily", columns.stdDaily, "std_daily"],
+    ["demand28", columns.demand28, "D_month"],
+    ["meanDaily", columns.meanDaily, "mean_daily"],
+    ["annualizedDemand", columns.annualizedDemand, "D_annual_equiv"],
+    ["economicOrderQty", columns.economicOrderQty, "EOQ"],
+    ["recommendedOrderTarget", columns.recommendedOrderTarget, "Recommended_Order"],
+    ["safetyStock", columns.safetyStock, "Safety_Stock"],
+    ["reorderPoint", columns.reorderPoint, "Reorder_Point"],
+    ["annualOrderCost", columns.annualOrderCost, "Annual_Order_Cost"],
+    ["annualHoldingCost", columns.annualHoldingCost, "Annual_Holding_Cost"],
+    ["annualPurchaseCost", columns.annualPurchaseCost, "Annual_Purchase_Cost"],
+    ["totalAnnualCost", columns.totalAnnualCost, "Total_Annual_Cost"],
+  ]
+
+  for (let index = 1; index < lines.length; index += 1) {
+    const row = parseCsvLine(lines[index])
+    const sku = (row[columns.sku] ?? "").trim()
+    if (!sku) continue
+
+    const month = parseNumber(row[columns.month])
+    if (month !== 1 && month !== 2) {
+      invalidRows.push(`${sku}: invalid month ${row[columns.month]}`)
+      continue
+    }
+
+    const key = `${sku}:${month}`
+    if (seenKeys.has(key)) duplicateKeys.push(key)
+    seenKeys.add(key)
+    skuSet.add(sku)
+    const monthsForSku = skuMonths.get(sku) ?? new Set()
+    monthsForSku.add(month)
+    skuMonths.set(sku, monthsForSku)
+
+    const invalidCountBeforeRow = invalidRows.length
+    const values = {}
+    for (const [name, columnIndex, label] of requiredNumericColumns) {
+      const rawValue = row[columnIndex]
+      const normalized = String(rawValue ?? "").trim().replace(",", ".")
+      const parsed = Number(normalized)
+      if (!normalized || !Number.isFinite(parsed)) {
+        invalidRows.push(`${sku}: invalid ${label} ${rawValue ?? ""}`.trim())
+      }
+      values[name] = Number.isFinite(parsed) ? parsed : 0
+    }
+
+    const cycleTimeRaw = String(row[columns.cycleTimeDays] ?? "").trim()
+    const cycleTime = cycleTimeRaw ? Number(cycleTimeRaw.replace(",", ".")) : null
+    if (cycleTimeRaw && !Number.isFinite(cycleTime)) {
+      invalidRows.push(`${sku}: invalid Cycle_Time_days ${row[columns.cycleTimeDays]}`)
+    }
+    if (invalidRows.length > invalidCountBeforeRow) continue
+
+    const entry = [
+      sku,
+      month,
+      round(values.unitCost, 2),
+      round(values.stdDaily, 4),
+      round(values.demand28, 2),
+      round(values.meanDaily, 4),
+      round(values.annualizedDemand, 2),
+      round(values.economicOrderQty, 2),
+      round(values.recommendedOrderTarget, 2),
+      round(values.safetyStock, 2),
+      round(values.reorderPoint, 2),
+      cycleTime != null && cycleTime > 0 && cycleTime <= 365 ? round(cycleTime, 2) : null,
+      round(values.annualOrderCost, 0),
+      round(values.annualHoldingCost, 0),
+      round(values.annualPurchaseCost, 0),
+      round(values.totalAnnualCost, 0),
+    ]
+
+    if ([2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15].some((tupleIndex) => entry[tupleIndex] < 0 || Number.isNaN(entry[tupleIndex]))) {
+      invalidRows.push(`${sku}: negative or NaN numeric field`)
+      continue
+    }
+
+    const forecast = forecastData.forecastBySku.get(sku)
+    const forecastSum = month === 1 ? sumForecast(forecast, "validation") : sumForecast(forecast, "evaluation")
+    if (forecast && Math.abs(entry[4] - forecastSum) > 0.1) {
+      mismatchRows.push({ sku, month, demand28: entry[4], forecastSum: round(forecastSum, 2) })
+    }
+
+    rows.push(entry)
+    const summary = summaryByMonth.get(month) ?? {
+      month,
+      skuCount: 0,
+      totalDemand28: 0,
+      totalRecommendedOrderTarget: 0,
+      totalSafetyStock: 0,
+      totalAnnualOrderCost: 0,
+      totalAnnualHoldingCost: 0,
+      totalAnnualPurchaseCost: 0,
+      totalAnnualCost: 0,
+      cycleTimeTotal: 0,
+      cycleTimeCount: 0,
+    }
+    summary.skuCount += 1
+    summary.totalDemand28 += entry[4]
+    summary.totalRecommendedOrderTarget += entry[8]
+    summary.totalSafetyStock += entry[9]
+    summary.totalAnnualOrderCost += entry[12]
+    summary.totalAnnualHoldingCost += entry[13]
+    summary.totalAnnualPurchaseCost += entry[14]
+    summary.totalAnnualCost += entry[15]
+    if (entry[11] != null) {
+      summary.cycleTimeTotal += entry[11]
+      summary.cycleTimeCount += 1
+    }
+    summaryByMonth.set(month, summary)
+  }
+
+  if (duplicateKeys.length > 0) throw new Error(`Inventory plan duplicate keys: ${duplicateKeys.slice(0, 10).join(", ")}`)
+  if (invalidRows.length > 0) throw new Error(`Inventory plan invalid rows: ${invalidRows.slice(0, 10).join("; ")}`)
+  const missingMonthSkus = [...skuMonths.entries()]
+    .filter(([, months]) => !months.has(1) || !months.has(2))
+    .map(([sku, months]) => `${sku}: months ${[...months].sort().join(",") || "none"}`)
+  if (missingMonthSkus.length > 0) {
+    throw new Error(`Inventory plan SKUs missing month coverage: ${missingMonthSkus.slice(0, 10).join("; ")}`)
+  }
+  const missingForecastKeys = []
+  for (const sku of forecastData.forecastBySku.keys()) {
+    if (!seenKeys.has(`${sku}:1`)) missingForecastKeys.push(`${sku}:1`)
+    if (!seenKeys.has(`${sku}:2`)) missingForecastKeys.push(`${sku}:2`)
+  }
+  if (missingForecastKeys.length > 0) {
+    throw new Error(`Inventory plan missing forecast SKU/month keys: ${missingForecastKeys.slice(0, 10).join(", ")}`)
+  }
+  if (mismatchRows.length > 0) {
+    throw new Error(`Inventory plan forecast mismatch rows: ${mismatchRows.length}. First mismatches: ${JSON.stringify(mismatchRows.slice(0, 10))}`)
+  }
+
+  const summaries = [...summaryByMonth.values()].map((summary) => ({
+    month: summary.month,
+    skuCount: summary.skuCount,
+    totalDemand28: round(summary.totalDemand28, 2),
+    totalRecommendedOrderTarget: round(summary.totalRecommendedOrderTarget, 2),
+    totalSafetyStock: round(summary.totalSafetyStock, 2),
+    totalAnnualOrderCost: round(summary.totalAnnualOrderCost, 0),
+    totalAnnualHoldingCost: round(summary.totalAnnualHoldingCost, 0),
+    totalAnnualPurchaseCost: round(summary.totalAnnualPurchaseCost, 0),
+    totalAnnualCost: round(summary.totalAnnualCost, 0),
+    averageCycleTimeDays: summary.cycleTimeCount > 0 ? round(summary.cycleTimeTotal / summary.cycleTimeCount, 2) : null,
+  })).sort((left, right) => left.month - right.month)
+
+  return {
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      source: "inventory_plan.csv",
+      forecastSource: "submission_nbeats.csv",
+      horizonDays: FORECAST_DAYS_PER_SPLIT,
+      months: [1, 2],
+      rows: rows.length,
+      skuCount: skuSet.size,
+      duplicateKeys: duplicateKeys.length,
+      forecastMismatchRows: mismatchRows.length,
+      fields: ["sku", "month", "unitCost", "stdDaily", "demand28", "meanDaily", "annualizedDemand", "economicOrderQty", "recommendedOrderTarget", "safetyStock", "reorderPoint", "cycleTimeDays", "annualOrderCost", "annualHoldingCost", "annualPurchaseCost", "totalAnnualCost"],
+      summaries,
+    },
+    rows: rows.sort((left, right) => left[0].localeCompare(right[0]) || left[1] - right[1]),
   }
 }
 
@@ -440,6 +656,232 @@ function buildCalendarSummary(calendarData, startDate, endDate) {
   }
 }
 
+const WEEKDAY_LABELS = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
+
+function getWeekday(isoDate) {
+  return toUtcDate(isoDate).getUTCDay()
+}
+
+function isHolidayWindow(calendarData, date) {
+  for (let offset = -3; offset <= 3; offset += 1) {
+    const entry = calendarData.calendarByDate.get(addDays(date, offset))
+    if (entry?.isPublicHoliday || entry?.isLunarEvent) return true
+  }
+  return false
+}
+
+function buildDashboardInsights(trainData, forecastData, inventoryPlanData, calendarData) {
+  const weekdayAccumulator = Array.from({ length: 7 }, (_, weekday) => ({
+    weekday,
+    label: WEEKDAY_LABELS[weekday],
+    totalQuantity: 0,
+    totalRevenue: 0,
+    activeDays: new Set(),
+  }))
+  const saturdaySundayByMonth = new Map()
+  const returnByMonth = new Map()
+  const dailyTotals = new Map()
+  const revenueBySku = []
+
+  for (const summary of trainData.summaryBySku.values()) {
+    revenueBySku.push({ sku: summary.sku, revenue: Math.max(0, summary.positiveRevenue) })
+
+    for (const [date, point] of summary.daily.entries()) {
+      const weekday = getWeekday(date)
+      const quantity = point.quantity
+      const revenue = point.revenue
+      const month = date.slice(0, 7)
+
+      weekdayAccumulator[weekday].totalQuantity += quantity
+      weekdayAccumulator[weekday].totalRevenue += revenue
+      weekdayAccumulator[weekday].activeDays.add(date)
+
+      if (weekday === 0 || weekday === 6) {
+        const trend = saturdaySundayByMonth.get(month) ?? {
+          month,
+          saturdayQuantity: 0,
+          sundayQuantity: 0,
+          saturdayRevenue: 0,
+          sundayRevenue: 0,
+        }
+        if (weekday === 6) {
+          trend.saturdayQuantity += quantity
+          trend.saturdayRevenue += revenue
+        } else {
+          trend.sundayQuantity += quantity
+          trend.sundayRevenue += revenue
+        }
+        saturdaySundayByMonth.set(month, trend)
+      }
+
+      const daily = dailyTotals.get(date) ?? { quantity: 0, revenue: 0 }
+      daily.quantity += quantity
+      daily.revenue += revenue
+      dailyTotals.set(date, daily)
+
+      const returns = returnByMonth.get(month) ?? {
+        month,
+        grossQuantity: 0,
+        returnQuantity: 0,
+        grossRevenue: 0,
+        returnedRevenueProxy: 0,
+      }
+      if (quantity > 0) {
+        returns.grossQuantity += quantity
+        returns.grossRevenue += Math.max(0, revenue)
+      } else if (quantity < 0) {
+        const absoluteReturn = Math.abs(quantity)
+        returns.returnQuantity += absoluteReturn
+        returns.returnedRevenueProxy += Math.abs(revenue)
+      }
+      returnByMonth.set(month, returns)
+    }
+  }
+
+  const forecastStartDate = addDays(trainData.maxDate, 1)
+  const forecastCalendarByDate = new Map()
+  for (const forecast of forecastData.forecastBySku.values()) {
+    const values = [...forecast.validation, ...forecast.evaluation]
+    values.forEach((quantity, index) => {
+      const date = addDays(forecastStartDate, index)
+      const existing = forecastCalendarByDate.get(date) ?? 0
+      forecastCalendarByDate.set(date, existing + quantity)
+    })
+  }
+
+  const weekdaySummary = weekdayAccumulator.map((entry) => ({
+    weekday: entry.weekday,
+    label: entry.label,
+    totalQuantity: round(entry.totalQuantity, 2),
+    totalRevenue: round(entry.totalRevenue, 0),
+    activeDays: entry.activeDays.size,
+    averageDailyQuantity: entry.activeDays.size > 0 ? round(entry.totalQuantity / entry.activeDays.size, 2) : 0,
+    averageDailyRevenue: entry.activeDays.size > 0 ? round(entry.totalRevenue / entry.activeDays.size, 0) : 0,
+    forecast28Quantity: round([...forecastCalendarByDate.entries()].reduce((sum, [date, quantity]) => getWeekday(date) === entry.weekday && date < addDays(forecastStartDate, FORECAST_DAYS_PER_SPLIT) ? sum + quantity : sum, 0), 2),
+  }))
+
+  const saturdaySundayTrend = [...saturdaySundayByMonth.values()]
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .map((entry) => ({
+      month: entry.month,
+      saturdayQuantity: round(entry.saturdayQuantity, 2),
+      sundayQuantity: round(entry.sundayQuantity, 2),
+      saturdayRevenue: round(entry.saturdayRevenue, 0),
+      sundayRevenue: round(entry.sundayRevenue, 0),
+    }))
+
+  const returnMonthly = [...returnByMonth.values()]
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .map((entry) => ({
+      month: entry.month,
+      grossQuantity: round(entry.grossQuantity, 2),
+      returnQuantity: round(entry.returnQuantity, 2),
+      returnRate: entry.grossQuantity > 0 ? round(entry.returnQuantity / entry.grossQuantity, 4) : 0,
+      grossRevenue: round(entry.grossRevenue, 0),
+      returnedRevenueProxy: round(entry.returnedRevenueProxy, 0),
+    }))
+
+  const rankedSkuRevenue = revenueBySku.sort((left, right) => right.revenue - left.revenue)
+  const totalRevenue = rankedSkuRevenue.reduce((sum, entry) => sum + entry.revenue, 0)
+  const revenueShare = (count) => totalRevenue > 0 ? rankedSkuRevenue.slice(0, count).reduce((sum, entry) => sum + entry.revenue, 0) / totalRevenue : 0
+  const bucketDefinitions = [
+    ["Top 1", 1],
+    ["Top 2-50", 50],
+    ["Top 51-200", 200],
+    ["Long-tail", rankedSkuRevenue.length],
+  ]
+  let previousCutoff = 0
+  let cumulativeRevenue = 0
+  const rankedBuckets = bucketDefinitions.map(([bucket, cutoff]) => {
+    const rows = rankedSkuRevenue.slice(previousCutoff, cutoff)
+    const revenue = rows.reduce((sum, entry) => sum + entry.revenue, 0)
+    cumulativeRevenue += revenue
+    previousCutoff = cutoff
+    return {
+      bucket,
+      skuCount: rows.length,
+      revenue: round(revenue, 0),
+      revenueShare: totalRevenue > 0 ? round(revenue / totalRevenue, 4) : 0,
+      cumulativeShare: totalRevenue > 0 ? round(cumulativeRevenue / totalRevenue, 4) : 0,
+    }
+  })
+
+  const holidayDates = [...calendarData.calendarByDate.values()]
+    .filter((entry) => entry.date >= trainData.minDate && entry.date <= trainData.maxDate && (entry.isPublicHoliday || entry.isLunarEvent))
+    .map((entry) => entry.date)
+  const holidayImpact = []
+  for (let relativeDay = -7; relativeDay <= 7; relativeDay += 1) {
+    let quantity = 0
+    let revenue = 0
+    let sampleDays = 0
+    const seenDates = new Set()
+    for (const holidayDate of holidayDates) {
+      const date = addDays(holidayDate, relativeDay)
+      if (seenDates.has(date)) continue
+      seenDates.add(date)
+      const daily = dailyTotals.get(date)
+      if (!daily) continue
+      quantity += daily.quantity
+      revenue += daily.revenue
+      sampleDays += 1
+    }
+    holidayImpact.push({
+      relativeDay,
+      averageQuantity: sampleDays > 0 ? round(quantity / sampleDays, 2) : 0,
+      averageRevenue: sampleDays > 0 ? round(revenue / sampleDays, 0) : 0,
+      sampleDays,
+    })
+  }
+
+  const forecastCalendarImpact = [...forecastCalendarByDate.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, forecastQuantity]) => {
+      const weekday = getWeekday(date)
+      return {
+        date,
+        forecastQuantity: round(forecastQuantity, 2),
+        weekday,
+        weekdayLabel: WEEKDAY_LABELS[weekday],
+        isSaturday: weekday === 6,
+        isSunday: weekday === 0,
+        isHolidayWindow: isHolidayWindow(calendarData, date),
+      }
+    })
+
+  if (weekdaySummary.length !== 7) throw new Error("Dashboard insights weekday summary must contain 7 rows")
+  if (returnMonthly.some((entry) => !Number.isFinite(entry.returnRate))) throw new Error("Dashboard insights return rate contains invalid values")
+  if (!Number.isFinite(totalRevenue) || rankedBuckets.some((entry) => entry.revenueShare < 0 || entry.revenueShare > 1)) throw new Error("Dashboard insights Pareto share is invalid")
+  if (forecastCalendarImpact.some((entry) => !entry.date)) throw new Error("Dashboard insights forecast calendar point has invalid date")
+
+  return {
+    generatedAt: new Date().toISOString(),
+    summary: {
+      transactionRows: trainData.rowCount,
+      trainSkuCount: trainData.skuCount,
+      forecastSkuCount: forecastData.skuCount,
+      inventoryPlanSkuCount: inventoryPlanData.metadata.skuCount,
+      inventoryPlanForecastMismatchRows: inventoryPlanData.metadata.forecastMismatchRows,
+      trainStartDate: trainData.minDate,
+      trainEndDate: trainData.maxDate,
+      forecastStartDate,
+      forecastEndDate: addDays(trainData.maxDate, FORECAST_DAYS_PER_SPLIT * 2),
+    },
+    weekdaySummary,
+    saturdaySundayTrend,
+    returnMonthly,
+    paretoSummary: {
+      top1Share: round(revenueShare(1), 4),
+      top50Share: round(revenueShare(50), 4),
+      top200Share: round(revenueShare(200), 4),
+      longTailShare: round(1 - revenueShare(200), 4),
+      totalSkuCount: rankedSkuRevenue.length,
+      rankedBuckets,
+    },
+    holidayImpact,
+    forecastCalendarImpact,
+  }
+}
+
 function writeJson(fileName, value) {
   fs.writeFileSync(path.join(outputDir, fileName), `${JSON.stringify(value)}\n`, "utf8")
 }
@@ -459,6 +901,7 @@ function main() {
 
   const trainData = loadTrainData()
   const forecastData = loadForecastData()
+  const inventoryPlanData = loadInventoryPlanData(forecastData)
   const forecastEndDate = addDays(trainData.maxDate, FORECAST_DAYS_PER_SPLIT * 2)
   const calendarData = loadCalendarData(trainData.minDate, forecastEndDate)
   const productSummaries = buildProductSummaries(trainData, forecastData)
@@ -470,6 +913,10 @@ function main() {
     forecastRows: forecastData.rowCount,
     forecastSkuCount: forecastData.skuCount,
     calendarRows: calendarData.rowCount,
+    inventoryPlanRows: inventoryPlanData.metadata.rows,
+    inventoryPlanSkuCount: inventoryPlanData.metadata.skuCount,
+    inventoryPlanForecastMismatchRows: inventoryPlanData.metadata.forecastMismatchRows,
+    inventoryPlanSource: inventoryPlanData.metadata.source,
     calendarStartDate: calendarData.minDate,
     calendarEndDate: calendarData.maxDate,
     minTrainDate: trainData.minDate,
@@ -502,6 +949,8 @@ function main() {
     ],
     dailySalesSeriesFields: ["sku", ["date", "quantity", "revenue"]],
     dailyForecastSeriesFields: ["sku", "validationF1ToF28", "evaluationF1ToF28"],
+    inventoryPlanFields: inventoryPlanData.metadata.fields,
+    inventoryPlanSummaries: inventoryPlanData.metadata.summaries,
     dailyCalendarFeatureFields: [
       "date",
       "isWeekend",
@@ -521,9 +970,12 @@ function main() {
   writeJson("product-summaries.json", productSummaries)
   writeJson("daily-sales-series.json", buildDailySalesSeries(trainData, seriesSkus))
   writeJson("daily-forecast-series.json", buildDailyForecastSeries(forecastData, seriesSkus))
+  writeJson("inventory-plan.json", { metadata: inventoryPlanData.metadata, rows: inventoryPlanData.rows })
   writeJson("daily-calendar-features.json", buildDailyCalendarFeatures(calendarData, trainData.minDate, forecastEndDate))
   writeJson("calendar-summary.json", buildCalendarSummary(calendarData, trainData.minDate, forecastEndDate))
+  writeJson("dashboard-insights.json", buildDashboardInsights(trainData, forecastData, inventoryPlanData, calendarData))
 
+  console.log(`Inventory plan: ${inventoryPlanData.metadata.rows} rows, ${inventoryPlanData.metadata.skuCount} SKU, ${inventoryPlanData.metadata.forecastMismatchRows} forecast mismatches.`)
   console.log(`Generated ${productSummaries.length} SKU summaries, ${seriesSkus.size} SKU series, and ${calendarData.rowCount} calendar rows.`)
 }
 

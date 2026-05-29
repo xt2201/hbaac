@@ -10,6 +10,8 @@ import {
   Package,
   ListChecks,
   MessageSquare,
+  Sparkles,
+  GitBranch,
   ChevronLeft,
   ChevronRight,
   Box,
@@ -19,9 +21,23 @@ import { useState } from "react"
 
 const navItems = [
   {
-    title: "Điều hành lợi nhuận",
+    title: "Trung tâm điều hành",
     href: "/dashboard",
     icon: LayoutDashboard,
+  },
+  {
+    title: "Câu chuyện demo",
+    href: "/dashboard/story",
+    icon: Sparkles,
+  },
+  {
+    title: "MLOps Pilot",
+    href: "/dashboard/mlops",
+    icon: GitBranch,
+  },
+  {
+    title: "Quyết định",    href: "/dashboard/decision-queue",
+    icon: ListChecks,
   },
   {
     title: "Dự báo nhu cầu",
@@ -29,22 +45,17 @@ const navItems = [
     icon: TrendingUp,
   },
   {
-    title: "Rủi ro thiếu hàng",
-    href: "/dashboard/watchlist",
-    icon: AlertTriangle,
-  },
-  {
-    title: "Hàng chờ quyết định",
-    href: "/dashboard/decision-queue",
-    icon: ListChecks,
-  },
-  {
-    title: "Khuyến nghị đặt hàng",
+    title: "Kế hoạch mua hàng",
     href: "/dashboard/replenishment",
     icon: Package,
   },
   {
-    title: "AnalyticsBot",
+    title: "Giám sát rủi ro",
+    href: "/dashboard/watchlist",
+    icon: AlertTriangle,
+  },
+  {
+    title: "Trợ lý phân tích",
     href: "/analytics-bot",
     icon: MessageSquare,
   },
@@ -68,8 +79,8 @@ export function Sidebar() {
         </div>
         {!collapsed && (
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-sidebar-foreground">AutoParts</span>
-            <span className="text-xs text-muted-foreground">Intelligence Platform</span>
+            <span className="text-sm font-semibold text-sidebar-foreground">Phụ tùng ô tô</span>
+            <span className="text-xs text-muted-foreground">Hệ thống điều hành</span>
           </div>
         )}
       </div>

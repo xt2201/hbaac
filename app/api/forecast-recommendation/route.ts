@@ -12,8 +12,6 @@ const requestSchema = z.object({
     brand: z.string(),
     unitPrice: z.number(),
     unitCost: z.number(),
-    leadTimeDays: z.number(),
-    minOrderQty: z.number(),
   }),
   forecast: z.object({
     days: z.number(),
@@ -21,10 +19,15 @@ const requestSchema = z.object({
     avgDailyDemand: z.number(),
     method: z.string(),
   }),
-  inventory: z.object({
-    currentStock: z.number(),
+  inventoryPolicy: z.object({
     reorderPoint: z.number(),
-    daysOfStock: z.number(),
+    recommendedOrder: z.number(),
+    safetyStock: z.number().optional(),
+    economicOrderQty: z.number().optional(),
+    cycleTimeDays: z.number().nullable().optional(),
+  }),
+  financial: z.object({
+    protectedProfit: z.number(),
   }),
   historical: z.object({
     totalSales: z.number(),
@@ -50,13 +53,9 @@ type ForecastRequest = z.infer<typeof requestSchema>
 function buildPrompt(data: ForecastRequest) {
   const margin = data.product.unitPrice - data.product.unitCost
   const marginPct = ((margin / Math.max(1, data.product.unitPrice)) * 100).toFixed(0)
-  const quantityAtRisk = Math.max(0, Math.ceil(data.forecast.totalForecastQty - data.inventory.currentStock))
-  const profitAtRisk = Math.round(quantityAtRisk * margin)
-  const recommendedQty = Math.max(
-    data.product.minOrderQty,
-    data.inventory.reorderPoint - data.inventory.currentStock +
-      Math.ceil(data.forecast.avgDailyDemand * data.product.leadTimeDays)
-  )
+  const recommendedQty = Math.max(0, Math.ceil(data.inventoryPolicy.recommendedOrder))
+  const protectedQty = Math.min(recommendedQty, Math.max(0, Math.ceil(data.forecast.totalForecastQty)))
+  const protectedProfit = Math.max(0, Math.round(data.financial.protectedProfit || protectedQty * margin))
 
   let driverText = ""
   if (data.drivers && data.drivers.notableEvents.length > 0) {
@@ -73,47 +72,44 @@ ${events}
 
 ## Sản phẩm
 - SKU: ${data.product.sku}
-- Tên: ${data.product.name}
-- Ngành hàng: ${data.product.category}
-- Thương hiệu: ${data.product.brand}
 - Giá bán: ${data.product.unitPrice.toLocaleString("vi-VN")}đ
 - Giá vốn: ${data.product.unitCost.toLocaleString("vi-VN")}đ
 - Biên lợi nhuận: ${margin.toLocaleString("vi-VN")}đ (${marginPct}%)
-- Lead time nhà cung cấp: ${data.product.leadTimeDays} ngày
-- MOQ: ${data.product.minOrderQty}
 
 ## Dự báo nhu cầu
 - Cửa sổ dự báo: ${data.forecast.days} ngày
 - Tổng nhu cầu dự báo: ${data.forecast.totalForecastQty} đơn vị
 - Nhu cầu trung bình: ${data.forecast.avgDailyDemand.toFixed(1)} đơn vị/ngày
-- Phương pháp: ${data.forecast.method}
+- Phương pháp: Dự báo nhu cầu tự động
 
-## Tồn kho hiện tại
-- Tồn kho khả dụng: ${data.inventory.currentStock}
-- Điểm đặt hàng lại: ${data.inventory.reorderPoint}
-- Số ngày tồn kho còn lại: ${data.inventory.daysOfStock}
+## Kế hoạch tồn kho
+- Điểm đặt hàng lại: ${data.inventoryPolicy.reorderPoint}
+- Lượng mua đề xuất: ${recommendedQty}
+- Tồn an toàn: ${Math.round(data.inventoryPolicy.safetyStock ?? 0)}
+- Lô mua tối ưu: ${Math.round(data.inventoryPolicy.economicOrderQty ?? 0)}
+- Thời gian chu kỳ theo chính sách: ${data.inventoryPolicy.cycleTimeDays ? `${Math.round(data.inventoryPolicy.cycleTimeDays)} ngày` : "chưa có"}
 
 ## Lịch sử bán hàng
 - Doanh số ${data.forecast.days} ngày qua: ${data.historical.totalSales}
 - Trung bình: ${data.historical.avgDaily.toFixed(1)} đơn vị/ngày
 
 ## Tính toán tham khảo
-- Số lượng có nguy cơ thiếu: ${quantityAtRisk} đơn vị
-- Lợi nhuận có nguy cơ mất: ${profitAtRisk.toLocaleString("vi-VN")}đ
-- Số lượng đề xuất đặt: ${Math.max(0, recommendedQty)} đơn vị
+- Lợi nhuận có thể bảo vệ theo dự báo và lượng mua đề xuất: ${protectedProfit.toLocaleString("vi-VN")}đ
+- Số lượng đề xuất đặt: ${recommendedQty} đơn vị
 ${driverText}
 
 ## Yêu cầu
 Chỉ trả về đúng 5 bullet bằng tiếng Việt, không viết đoạn mở đầu, không kết luận, không thêm dòng ngoài 5 bullet.
 Mỗi bullet bắt đầu bằng "- " và dài tối đa 1 câu.
 Góc nhìn phải kết hợp phân tích kinh doanh, tài chính và dữ liệu.
-Không bịa nguyên nhân ngoài dữ liệu đã cung cấp; nếu không có sự kiện lịch nổi bật thì nói rõ "không có driver lịch nổi bật".
+Không bịa nguyên nhân ngoài dữ liệu đã cung cấp; nếu không có tín hiệu lịch nổi bật thì nói rõ "không có tín hiệu lịch nổi bật".
 5 bullet bắt buộc theo thứ tự:
-- Rủi ro kinh doanh của SKU dựa trên tồn kho, lead time và forecast.
-- Tín hiệu dữ liệu chính: forecast, nhu cầu lịch sử, ngày hết hàng hoặc driver lịch nếu có.
-- Tác động tài chính: lợi nhuận có nguy cơ mất hoặc lợi nhuận có thể bảo vệ.
-- Khuyến nghị hành động: đặt bao nhiêu, khi nào, điều kiện ưu tiên.
-- Lưu ý về độ tin cậy/giả định dữ liệu: N-BEATS là dữ liệu cuộc thi, tồn kho/danh mục là enrichment demo.`
+- Rủi ro vận hành của mã hàng dựa trên dự báo và kế hoạch tồn kho, không dùng tồn kho giả.
+- Tín hiệu dữ liệu chính: dự báo nhu cầu, bán hàng gần đây hoặc tín hiệu lịch nếu có.
+- Tác động tài chính: lợi nhuận có thể bảo vệ theo dự báo và biên lợi nhuận.
+- Khuyến nghị xử lý: đặt bao nhiêu theo lượng mua đề xuất và ưu tiên tài chính.
+- Điểm cần theo dõi: cần rà soát nếu dự báo hoặc bán hàng gần đây biến động lớn.
+Không nhắc tên mô hình, tên file dữ liệu, tồn kho hiện tại, nhà cung cấp, thời gian giao hàng, số lượng đặt tối thiểu hoặc thuật ngữ nội bộ.`
 }
 
 export async function POST(req: Request) {
@@ -123,7 +119,7 @@ export async function POST(req: Request) {
 
     if (!parsed.success) {
       return Response.json(
-        { error: "Invalid request", details: parsed.error.flatten() },
+        { error: "Yêu cầu không hợp lệ", details: parsed.error.flatten() },
         { status: 400 }
       )
     }
@@ -134,14 +130,13 @@ export async function POST(req: Request) {
     const result = await generateText({
       model: getAnalyticsModel(),
       prompt,
-      temperature: 0.3,
     })
 
     const recommendation = result.text?.trim()
     if (!recommendation) {
       console.error("Empty AI recommendation text", { usage: result.usage })
       return Response.json(
-        { error: "Model returned empty response" },
+        { error: "Mô hình trả về phản hồi trống" },
         { status: 500 }
       )
     }
@@ -152,7 +147,7 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("Forecast recommendation error:", error)
     return Response.json(
-      { error: "Failed to generate recommendation" },
+      { error: "Không thể tạo khuyến nghị" },
       { status: 500 }
     )
   }

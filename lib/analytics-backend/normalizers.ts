@@ -7,7 +7,7 @@ function numberValue(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function stringValue(value: unknown, fallback = "N/A") {
+function stringValue(value: unknown, fallback = "Chưa có") {
   return typeof value === "string" && value.trim() ? value : fallback
 }
 
@@ -56,14 +56,14 @@ export function normalizeProductForecastResponse(raw: unknown, input: { days: nu
       name: stringValue(product.name ?? product.productName),
       category: stringValue(product.category),
       brand: stringValue(product.brand),
-      catalogSource: stringValue(product.catalogSource, "augmented_catalog"),
-      sourceNote: stringValue(product.sourceNote, "Trường danh mục là dữ liệu làm giàu, không phải dữ liệu thô của cuộc thi."),
+      catalogSource: stringValue(product.catalogSource, "Thông tin danh mục vận hành"),
+      sourceNote: stringValue(product.sourceNote, "Thông tin danh mục, tồn kho và điểm đặt hàng phục vụ vận hành."),
     },
     forecast: {
       days: numberValue(forecast.days, input.days),
       totalForecastQty: numberValue(forecast.totalForecastQty ?? forecast.totalQuantity ?? forecast.quantity),
       avgDailyDemand: String(forecast.avgDailyDemand ?? forecast.averageDailyDemand ?? (numberValue(forecast.totalForecastQty) / input.days || "0")),
-      method: stringValue(forecast.method, "backend"),
+      method: stringValue(forecast.method, "Mô hình dự báo nhu cầu"),
     },
     drivers,
     inventory: {
@@ -71,6 +71,16 @@ export function normalizeProductForecastResponse(raw: unknown, input: { days: nu
       reorderPoint: numberValue(inventory.reorderPoint),
       daysOfStock: numberValue(inventory.daysOfStock, 0),
       status: stringValue(inventory.status, "normal"),
+      targetStock: numberValue(inventory.targetStock ?? inventory.recommendedOrderTarget),
+      purchaseQty: numberValue(inventory.purchaseQty ?? inventory.suggestedQty),
+      demand28: numberValue(inventory.demand28 ?? inventory.forecastDemand28),
+      economicOrderQty: numberValue(inventory.economicOrderQty ?? inventory.eoq),
+      safetyStock: numberValue(inventory.safetyStock),
+      leadTimeDays: numberValue(inventory.leadTimeDays),
+      minOrderQty: numberValue(inventory.minOrderQty),
+      cycleTimeDays: "cycleTimeDays" in inventory ? numberValue(inventory.cycleTimeDays) : undefined,
+      policySource: stringValue(inventory.policySource ?? inventory.inventoryPolicySource, "fallback"),
+      policyNote: stringValue(inventory.policyNote ?? inventory.inventoryPolicyNote, "Thông tin tồn kho vận hành."),
     },
     recentSales: {
       last30Days: numberValue(recentSales.last30Days ?? recentSales.quantity),
@@ -120,9 +130,22 @@ export function normalizeReplenishmentResponse(raw: unknown) {
       category: stringValue(suggestion.category),
       priority: stringValue(suggestion.priority),
       suggestedQty: numberValue(suggestion.suggestedQty ?? suggestion.quantity),
+      purchaseQty: numberValue(suggestion.purchaseQty ?? suggestion.suggestedQty ?? suggestion.quantity),
       estimatedCost: numberValue(suggestion.estimatedCost ?? suggestion.cost),
       currentStock: numberValue(suggestion.currentStock ?? suggestion.stock),
       reorderPoint: numberValue(suggestion.reorderPoint),
+      targetStock: numberValue(suggestion.targetStock ?? suggestion.recommendedOrderTarget),
+      demand28: numberValue(suggestion.demand28 ?? suggestion.forecastDemand28),
+      economicOrderQty: numberValue(suggestion.economicOrderQty ?? suggestion.eoq),
+      safetyStock: numberValue(suggestion.safetyStock),
+      leadTimeDays: numberValue(suggestion.leadTimeDays),
+      minOrderQty: numberValue(suggestion.minOrderQty),
+      cycleTimeDays: "cycleTimeDays" in suggestion ? numberValue(suggestion.cycleTimeDays) : undefined,
+      unitCost: numberValue(suggestion.unitCost),
+      grossMarginPerUnit: numberValue(suggestion.grossMarginPerUnit),
+      expectedProfitSaved: numberValue(suggestion.expectedProfitSaved),
+      roi: numberValue(suggestion.roi),
+      policySource: stringValue(suggestion.policySource ?? suggestion.inventoryPolicySource, "fallback"),
       supplierName: stringValue(suggestion.supplierName ?? suggestion.supplier),
       reason: stringValue(suggestion.reason),
     }
@@ -171,7 +194,9 @@ export function normalizeInventorySummaryResponse(raw: unknown, input: { categor
     totalValue: numberValue(data.totalValue),
     lowStockCount: numberValue(data.lowStockCount),
     overstockCount: numberValue(data.overstockCount),
-    healthStatus: stringValue(data.healthStatus, "N/A"),
+    healthStatus: stringValue(data.healthStatus, "Chưa có"),
+    policySummary: isRecord(data.policySummary) ? data.policySummary : undefined,
+    fieldExplanations: isRecord(data.fieldExplanations) ? data.fieldExplanations : undefined,
   }
 }
 
@@ -196,7 +221,7 @@ export function normalizeCompareProductsResponse(raw: unknown, input: { days: nu
     period: stringValue(data.period, `${input.days} ngày gần nhất`),
     productsCompared: numberValue(data.productsCompared, comparison.length),
     comparison,
-    bestSeller: stringValue(data.bestSeller, comparison.reduce((best, current) => current.revenue > best.revenue ? current : best, comparison[0] ?? { sku: "N/A", revenue: 0 }).sku),
+    bestSeller: stringValue(data.bestSeller, comparison.reduce((best, current) => current.revenue > best.revenue ? current : best, comparison[0] ?? { sku: "Chưa có", revenue: 0 }).sku),
   }
 }
 
