@@ -36,6 +36,7 @@ TET_WINDOWS: list[tuple[str, str, str]] = [
     ("2023-01-20", "2023-01-26", "VN_TET_2023"),
     ("2024-02-07", "2024-02-14", "VN_TET_2024"),  # includes 7-Feb bridge
     ("2025-01-25", "2025-02-02", "VN_TET_2025"),
+    ("2026-02-14", "2026-02-22", "VN_TET_2026"),  # official 9-day Tet holiday
 ]
 
 # Bridge / compensatory days (nghỉ bù) common in VN public sector
@@ -46,6 +47,9 @@ BRIDGE_DAYS: list[tuple[str, str]] = [
     ("2024-05-03", "VN_BRIDGE_LABOR_2024"),  # May 1-2 weekend pattern
     ("2025-05-02", "VN_BRIDGE_LABOR_2025"),
     ("2025-09-01", "VN_BRIDGE_BEFORE_NATIONAL_2025"),
+    ("2026-04-27", "VN_BRIDGE_HUNG_KINGS_2026"),  # April 26 Hung Kings was Sunday
+    ("2026-08-31", "VN_SWAP_BEFORE_NATIONAL_2026"),  # National Day weekend bridge
+    ("2026-09-01", "VN_BRIDGE_BEFORE_NATIONAL_2026"),  # National Day adjacent holiday
 ]
 
 # Pre-scale business (very early dataset — distributor ramp-up)
@@ -61,6 +65,7 @@ HUNG_KINGS = {
     2023: "2023-04-29",
     2024: "2024-04-18",
     2025: "2025-04-07",
+    2026: "2026-04-26",
 }
 
 # COVID / exceptional closure hints (optional tags)

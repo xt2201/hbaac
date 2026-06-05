@@ -118,7 +118,7 @@ cal[cal["classification"].str.startswith("LOW") | cal["classification"].str.star
 new_holiday_candidates.to_csv(out_candidates, index=False)
 
 # Summary stats
-print(f"\nCalendar span: {start.date()} → {end.date()} ({len(cal)} days)")
+print(f"\nCalendar span: {start.date()} -> {end.date()} ({len(cal)} days)")
 print(f"Days with transactions: {cal['has_transactions'].sum()}")
 print(f"Missing days (no txn): {(cal['has_transactions']==0).sum()}")
 print("\nMissing breakdown:")
@@ -127,7 +127,7 @@ print("\nLow/abnormal volume (has txn):")
 low = cal[cal["classification"].str.contains("LOW|NEAR|TET_PARTIAL|HOLIDAY_PARTIAL")]
 print(low.groupby("classification").size().sort_values(ascending=False).head(15).to_string())
 print(f"\nNon-Sunday missing NOT in legacy ALL_HOLIDAYS: {len(new_holiday_candidates)}")
-print(f"  → {out_candidates}")
+print(f"  -> {out_candidates}")
 
 # Chart: missing by classification
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -198,5 +198,5 @@ for _, r in missing.sort_values("Date").iterrows():
     )
 
 (EDA_DIR / "CALENDAR_AUDIT_REPORT.md").write_text("".join(lines), encoding="utf-8")
-print(f"\nSaved → {EDA_DIR / 'CALENDAR_AUDIT_REPORT.md'}")
+print(f"\nSaved -> {EDA_DIR / 'CALENDAR_AUDIT_REPORT.md'}")
 print("Done.")
